@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown to KFX Converter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/github-markdown-css@5.2.0/github-markdown.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #4a90d9;
+            --secondary-color: #6c757d;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+        }
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .main-container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            margin: 20px auto;
+            padding: 30px;
+            max-width: 1400px;
+        }
+        .page-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        .page-header h1 {
+            color: #333;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        .page-header p {
+            color: #666;
+            font-size: 1.1rem;
+        }
+        .upload-zone {
+            border: 3px dashed #ddd;
+            border-radius: 16px;
+            padding: 40px;
+            text-align: center;
+            transition: all 0.3s ease;
+            background: #fafafa;
+            cursor: pointer;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: var(--primary-color);
+            background: #f0f7ff;
+        }
+        .upload-zone i {
+            font-size: 4rem;
+            color: #ccc;
+            margin-bottom: 15px;
+        }
+        .upload-zone.dragover i {
+            color: var(--primary-color);
+        }
+        .file-table {
+            margin-top: 30px;
+        }
+        .file-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .file-row:hover {
+            background: #f8f9fa;
+        }
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        .status-uploaded {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+        .status-converted {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .status-converted_epub {
+            background: #fff3e0;
+            color: #ef6c00;
+        }
+        .status-pending {
+            background: #f5f5f5;
+            color: #666;
+        }
+        .status-error {
+            background: #ffebee;
+            color: #c62828;
+        }
+        .btn-action {
+            padding: 4px 8px;
+            font-size: 0.85rem;
+            margin: 2px;
+        }
+        .btn-convert {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        .btn-convert:hover {
+            background: #3a7bc8;
+            border-color: #3a7bc8;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+        .empty-state i {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .modal-header .btn-close {
+            filter: brightness(0) invert(1);
+        }
+        .preview-content {
+            max-height: 400px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .select-all-checkbox {
+            margin-right: 10px;
+        }
+        .batch-actions {
+            margin-bottom: 15px;
+        }
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1100;
+        }
+        .file-name-cell {
+            max-width: 250px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .file-name-cell:hover {
+            overflow: visible;
+            white-space: normal;
+            word-break: break-all;
+        }
+        .time-cell {
+            font-size: 0.85rem;
+            color: #666;
+        }
+        .preview-tabs {
+            margin-top: 0;
+        }
+        .preview-tabs .nav-tabs {
+            border-bottom: 2px solid #dee2e6;
+        }
+        .preview-tabs .nav-link {
+            color: #495057;
+            border: none;
+            padding: 10px 20px;
+        }
+        .preview-tabs .nav-link.active {
+            color: var(--primary-color);
+            background: transparent;
+            border-bottom: 2px solid var(--primary-color);
+        }
+        .preview-rendered {
+            max-height: 500px;
+            overflow-y: auto;
+            background: #fafafa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        .preview-rendered .markdown-body {
+            font-size: 0.95rem;
+        }
+        .preview-content {
+            max-height: 500px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .btn-download-kfx {
+            background: #28a745;
+            border-color: #28a745;
+            color: white;
+        }
+        .btn-download-kfx:hover {
+            background: #218838;
+            border-color: #1e7e34;
+            color: white;
+        }
+        .btn-download-epub {
+            background: #fd7e14;
+            border-color: #fd7e14;
+            color: white;
+        }
+        .btn-download-epub:hover {
+            background: #dc6502;
+            border-color: #dc6502;
+            color: white;
+        }
+        .status-imported {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+        .btn-send-kindle {
+            background: #17a2b8;
+            border-color: #17a2b8;
+            color: white;
+        }
+        .btn-send-kindle:hover {
+            background: #138496;
+            border-color: #138496;
+            color: white;
+        }
+        .btn-delete-kindle {
+            background: #dc3545;
+            border-color: #dc3545;
+            color: white;
+        }
+        .btn-delete-kindle:hover {
+            background: #c82333;
+            border-color: #c82333;
+            color: white;
+        }
+        .kindle-status-bar {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .kindle-status-bar.connected {
+            background: #d4edda;
+        }
+        .kindle-status-bar.disconnected {
+            background: #f8d7da;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- Kindle 状态栏 -->
+        <div class="kindle-status-bar" id="kindleStatusBar">
+            <div>
+                <i class="bi bi-hdd" id="kindleIcon"></i>
+                <span id="kindleStatusText">检测 Kindle 连接...</span>
+            </div>
+            <button class="btn btn-sm btn-outline-secondary" id="refreshKindleBtn">
+                <i class="bi bi-arrow-repeat"></i> 刷新
+            </button>
+        </div>
+        <div class="page-header">
+            <h1><i class="bi bi-file-earmark-text"></i> Markdown to KFX Converter</h1>
+            <p>上传 Markdown 文件，一键转换为 Kindle KFX 格式</p>
+        </div>
+
+        <!-- 上传区域 -->
+        <div class="upload-zone" id="dropZone">
+            <i class="bi bi-cloud-upload"></i>
+            <h4>拖拽文件到这里上传</h4>
+            <p class="text-muted">或者点击选择文件 (支持 .md, .markdown)</p>
+            <input type="file" id="fileInput" accept=".md,.markdown" style="display: none;" multiple>
+            <div class="mt-3" id="uploadOptions" style="display: none;">
+                <div class="row justify-content-center">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control" id="customName" placeholder="自定义名称 (可选)">
+                    </div>
+                    <div class="col-md-3">
+                        <input type="text" class="form-control" id="customAuthor" placeholder="作者名 (可选)">
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-primary w-100" id="uploadBtn">
+                            <i class="bi bi-upload"></i> 上传
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 批量操作 -->
+        <div class="batch-actions mt-4" id="batchActions" style="display: none;">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <input type="checkbox" class="form-check-input select-all-checkbox" id="selectAll">
+                <label class="form-check-label" for="selectAll">全选</label>
+                <button class="btn btn-sm btn-convert text-white ms-3" id="batchConvertBtn">
+                    <i class="bi bi-arrow-repeat"></i> 批量转换
+                </button>
+                <button class="btn btn-sm btn-send-kindle" id="batchPushKindleBtn">
+                    <i class="bi bi-send"></i> 批量推送 Kindle
+                </button>
+                <button class="btn btn-sm btn-delete-kindle" id="batchDeleteKindleBtn">
+                    <i class="bi bi-eject"></i> 批量移除 Kindle
+                </button>
+                <button class="btn btn-sm btn-danger" id="batchDeleteBtn">
+                    <i class="bi bi-trash"></i> 批量删除
+                </button>
+            </div>
+        </div>
+
+        <!-- 文件列表 -->
+        <div class="file-table">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th width="40"><input type="checkbox" class="form-check-input" id="selectAllTable"></th>
+                        <th>文件名</th>
+                        <th>作者</th>
+                        <th>上传时间</th>
+                        <th>状态</th>
+                        <th>Kindle</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="fileList">
+                    {% if files %}
+                        {% for file in files %}
+                        <tr class="file-row" data-id="{{ file.id }}">
+                            <td><input type="checkbox" class="form-check-input file-checkbox" data-id="{{ file.id }}"></td>
+                            <td class="file-name-cell">
+                                <span class="file-display-name">{{ file.name }}</span>
+                                <button class="btn btn-link btn-sm rename-btn p-0 ms-1" data-id="{{ file.id }}" title="重命名">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                            </td>
+                            <td>
+                                <span class="author-display">{{ file.author }}</span>
+                                <button class="btn btn-link btn-sm edit-author-btn p-0 ms-1" data-id="{{ file.id }}" title="修改作者">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                            </td>
+                            <td class="time-cell">{{ file.upload_time[:19].replace('T', ' ') if file.upload_time else '-' }}</td>
+                            <td>
+                                {% if file.status == 'converted' %}
+                                <span class="status-badge status-converted">已转换 KFX</span>
+                                {% elif file.status == 'converted_epub' %}
+                                <span class="status-badge status-converted_epub">已转换 EPUB</span>
+                                {% elif file.status == 'uploaded' %}
+                                <span class="status-badge status-uploaded">待转换</span>
+                                {% else %}
+                                <span class="status-badge status-pending">{{ file.status }}</span>
+                                {% endif %}
+                                {% if file.is_imported %}
+                                <span class="status-badge status-imported ms-1">已导入</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group" role="group">
+                                    {% if file.has_kfx or file.has_epub %}
+                                        {% if file.is_imported %}
+                                        <button class="btn btn-sm btn-delete-kindle send-kindle-btn" data-id="{{ file.id }}" title="从 Kindle 删除">
+                                            <i class="bi bi-eject"></i> 移除
+                                        </button>
+                                        {% else %}
+                                        <button class="btn btn-sm btn-send-kindle send-kindle-btn" data-id="{{ file.id }}" title="推送到 Kindle">
+                                            <i class="bi bi-send"></i> 推送
+                                        </button>
+                                        {% endif %}
+                                    {% else %}
+                                    <span class="text-muted" style="font-size: 0.85rem;">需先转换</span>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                <div class="btn-group" role="group">
+                                    {% if file.status == 'uploaded' or file.status == 'error' %}
+                                    <button class="btn btn-sm btn-convert text-white convert-btn" data-id="{{ file.id }}" title="转换">
+                                        <i class="bi bi-arrow-repeat"></i>
+                                    </button>
+                                    {% endif %}
+                                    {% if file.has_md %}
+                                    <button class="btn btn-sm btn-outline-secondary preview-btn" data-id="{{ file.id }}" title="预览">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-info download-btn" data-id="{{ file.id }}" data-type="md" title="下载 MD">
+                                        <i class="bi bi-file-text"></i>
+                                    </button>
+                                    {% endif %}
+                                    {% if file.has_kfx %}
+                                    <button class="btn btn-sm btn-download-kfx download-btn" data-id="{{ file.id }}" data-type="kfx" title="下载 KFX">
+                                        <i class="bi bi-download"></i> KFX
+                                    </button>
+                                    {% endif %}
+                                    {% if file.has_epub %}
+                                    <button class="btn btn-sm btn-download-epub download-btn" data-id="{{ file.id }}" data-type="epub" title="下载 EPUB">
+                                        <i class="bi bi-download"></i> EPUB
+                                    </button>
+                                    {% endif %}
+                                    <button class="btn btn-sm btn-outline-danger delete-btn" data-id="{{ file.id }}" title="删除">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="6">
+                                <div class="empty-state">
+                                    <i class="bi bi-inbox"></i>
+                                    <h5>暂无文件</h5>
+                                    <p>上传一个 Markdown 文件开始转换吧</p>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Toast 容器 -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- 加载遮罩 -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- 重命名模态框 -->
+    <div class="modal fade" id="renameModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-pencil"></i> 重命名文件</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="renameFileId">
+                    <div class="mb-3">
+                        <label class="form-label">新名称</label>
+                        <input type="text" class="form-control" id="newName" placeholder="输入新名称">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="saveRenameBtn">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑作者模态框 -->
+    <div class="modal fade" id="authorModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-person"></i> 编辑作者</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="authorFileId">
+                    <div class="mb-3">
+                        <label class="form-label">作者名称</label>
+                        <input type="text" class="form-control" id="newAuthor" placeholder="输入作者名称">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="saveAuthorBtn">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 预览模态框 -->
+    <div class="modal fade" id="previewModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-eye"></i> 预览 Markdown</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="preview-tabs">
+                        <ul class="nav nav-tabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#previewRendered" type="button">
+                                    <i class="bi bi-file-earmark-rich"></i> 渲染预览
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#previewSource" type="button">
+                                    <i class="bi bi-code-slash"></i> 源代码
+                                </button>
+                            </li>
+                        </ul>
+                        <div class="tab-content mt-2">
+                            <div class="tab-pane fade show active" id="previewRendered">
+                                <div class="preview-rendered" id="previewRenderedContent"></div>
+                            </div>
+                            <div class="tab-pane fade" id="previewSource">
+                                <div class="preview-content" id="previewSourceContent"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 确认删除模态框 -->
+    <div class="modal fade" id="deleteModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> 确认删除</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>确定要删除这个文件吗？此操作不可撤销。</p>
+                    <input type="hidden" id="deleteFileId">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteBtn">删除</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 工具函数
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toastId = 'toast_' + Date.now();
+            const bgClass = type === 'success' ? 'bg-success' : type === 'error' ? 'bg-danger' : 'bg-info';
+            const html = `
+                <div id="${toastId}" class="toast align-items-center text-white ${bgClass}" role="alert">
+                    <div class="d-flex">
+                        <div class="toast-body">${message}</div>
+                        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                    </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', html);
+            const toast = new bootstrap.Toast(document.getElementById(toastId));
+            toast.show();
+            setTimeout(() => document.getElementById(toastId)?.remove(), 5000);
+        }
+
+        function showLoading() {
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
+
+        // 上传相关
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const uploadOptions = document.getElementById('uploadOptions');
+        let selectedFiles = null;
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.md') || f.name.endsWith('.markdown'));
+            if (files.length > 0) {
+                selectedFiles = files;
+                uploadOptions.style.display = 'block';
+            } else {
+                showToast('请选择 .md 或 .markdown 文件', 'error');
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                selectedFiles = Array.from(e.target.files);
+                uploadOptions.style.display = 'block';
+            }
+        });
+
+        document.getElementById('uploadBtn').addEventListener('click', async () => {
+            if (!selectedFiles) return;
+
+            showLoading();
+            const customName = document.getElementById('customName').value;
+            const customAuthor = document.getElementById('customAuthor').value;
+            let successCount = 0;
+
+            for (const file of selectedFiles) {
+                const formData = new FormData();
+                formData.append('file', file);
+                if (customName) formData.append('name', customName);
+                if (customAuthor) formData.append('author', customAuthor);
+
+                try {
+                    const res = await fetch('/upload', { method: 'POST', body: formData });
+                    const data = await res.json();
+                    if (data.success) {
+                        successCount++;
+                    } else {
+                        showToast(`上传失败: ${data.error}`, 'error');
+                    }
+                } catch (err) {
+                    showToast(`上传出错: ${err.message}`, 'error');
+                }
+            }
+
+            hideLoading();
+            if (successCount > 0) {
+                showToast(`成功上传 ${successCount} 个文件`, 'success');
+                setTimeout(() => location.reload(), 500);
+            }
+        });
+
+        // 转换
+        document.querySelectorAll('.convert-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const fileId = btn.dataset.id;
+                showLoading();
+                try {
+                    const res = await fetch(`/convert/${fileId}`, { method: 'POST' });
+                    const data = await res.json();
+                    if (data.success) {
+                        showToast('转换成功!', 'success');
+                        setTimeout(() => location.reload(), 500);
+                    } else {
+                        showToast(`转换失败: ${data.error}`, 'error');
+                    }
+                } catch (err) {
+                    showToast(`转换出错: ${err.message}`, 'error');
+                }
+                hideLoading();
+            });
+        });
+
+        // 下载
+        document.querySelectorAll('.download-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const fileId = btn.dataset.id;
+                const type = btn.dataset.type;
+                window.location.href = `/download/${fileId}/${type}`;
+            });
+        });
+
+        // 预览
+        document.querySelectorAll('.preview-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const fileId = btn.dataset.id;
+                document.getElementById('previewSourceContent').textContent = 'Loading...';
+                document.getElementById('previewRenderedContent').innerHTML = '<div class="text-center text-muted">Loading...</div>';
+                const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
+                previewModal.show();
+                try {
+                    const res = await fetch(`/preview/${fileId}`);
+                    const data = await res.json();
+                    const markdownContent = data.content || data.error || '';
+
+                    // 设置源代码视图
+                    document.getElementById('previewSourceContent').textContent = markdownContent;
+
+                    // 设置渲染预览视图 - 使用 marked.js 渲染
+                    if (typeof marked !== 'undefined') {
+                        const htmlContent = marked.parse(markdownContent);
+                        document.getElementById('previewRenderedContent').innerHTML = '<div class="markdown-body">' + htmlContent + '</div>';
+                    } else {
+                        document.getElementById('previewRenderedContent').textContent = markdownContent;
+                    }
+                } catch (err) {
+                    document.getElementById('previewSourceContent').textContent = '加载失败：' + err.message;
+                    document.getElementById('previewRenderedContent').innerHTML = '<div class="text-danger">加载失败：' + err.message + '</div>';
+                }
+            });
+        });
+
+        // 重命名
+        let renameModal;
+        document.querySelectorAll('.rename-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const fileId = btn.dataset.id;
+                const currentName = btn.parentElement.querySelector('.file-display-name').textContent;
+                document.getElementById('renameFileId').value = fileId;
+                document.getElementById('newName').value = currentName;
+                renameModal = new bootstrap.Modal(document.getElementById('renameModal'));
+                renameModal.show();
+            });
+        });
+
+        document.getElementById('saveRenameBtn').addEventListener('click', async () => {
+            const fileId = document.getElementById('renameFileId').value;
+            const newName = document.getElementById('newName').value.trim();
+            if (!newName) {
+                showToast('名称不能为空', 'error');
+                return;
+            }
+            try {
+                const res = await fetch(`/rename/${fileId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('重命名成功', 'success');
+                    renameModal.hide();
+                    setTimeout(() => location.reload(), 300);
+                } else {
+                    showToast(data.error, 'error');
+                }
+            } catch (err) {
+                showToast('操作失败: ' + err.message, 'error');
+            }
+        });
+
+        // 编辑作者
+        let authorModal;
+        document.querySelectorAll('.edit-author-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const fileId = btn.dataset.id;
+                const currentAuthor = btn.parentElement.querySelector('.author-display').textContent;
+                document.getElementById('authorFileId').value = fileId;
+                document.getElementById('newAuthor').value = currentAuthor;
+                authorModal = new bootstrap.Modal(document.getElementById('authorModal'));
+                authorModal.show();
+            });
+        });
+
+        document.getElementById('saveAuthorBtn').addEventListener('click', async () => {
+            const fileId = document.getElementById('authorFileId').value;
+            const newAuthor = document.getElementById('newAuthor').value.trim();
+            if (!newAuthor) {
+                showToast('作者不能为空', 'error');
+                return;
+            }
+            try {
+                const res = await fetch(`/update_author/${fileId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ author: newAuthor })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('修改成功', 'success');
+                    authorModal.hide();
+                    setTimeout(() => location.reload(), 300);
+                } else {
+                    showToast(data.error, 'error');
+                }
+            } catch (err) {
+                showToast('操作失败: ' + err.message, 'error');
+            }
+        });
+
+        // 删除
+        let deleteModal;
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const fileId = btn.dataset.id;
+                document.getElementById('deleteFileId').value = fileId;
+                deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+                deleteModal.show();
+            });
+        });
+
+        document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+            const fileId = document.getElementById('deleteFileId').value;
+            try {
+                const res = await fetch(`/delete/${fileId}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('删除成功', 'success');
+                    deleteModal.hide();
+                    setTimeout(() => location.reload(), 300);
+                } else {
+                    showToast(data.error, 'error');
+                }
+            } catch (err) {
+                showToast('删除失败: ' + err.message, 'error');
+            }
+        });
+
+        // 批量选择
+        const selectAllCheckbox = document.getElementById('selectAllTable');
+        const fileCheckboxes = document.querySelectorAll('.file-checkbox');
+        const batchActions = document.getElementById('batchActions');
+
+        function updateBatchActions() {
+            const checked = document.querySelectorAll('.file-checkbox:checked');
+            batchActions.style.display = checked.length > 0 ? 'block' : 'none';
+        }
+
+        selectAllCheckbox.addEventListener('change', () => {
+            fileCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+            updateBatchActions();
+        });
+
+        fileCheckboxes.forEach(cb => {
+            cb.addEventListener('change', updateBatchActions);
+        });
+
+        // 批量转换
+        document.getElementById('batchConvertBtn').addEventListener('click', async () => {
+            const checked = document.querySelectorAll('.file-checkbox:checked');
+            if (checked.length === 0) return;
+
+            showLoading();
+            const ids = Array.from(checked).map(cb => cb.dataset.id);
+            try {
+                const res = await fetch('/batch_convert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+                const data = await res.json();
+                hideLoading();
+                if (data.success) {
+                    const success = data.results.filter(r => r.status === 'success').length;
+                    showToast(`批量转换完成: ${success}/${ids.length} 成功`, 'success');
+                    setTimeout(() => location.reload(), 500);
+                }
+            } catch (err) {
+                hideLoading();
+                showToast('批量转换失败: ' + err.message, 'error');
+            }
+        });
+
+        // 批量删除
+        document.getElementById('batchDeleteBtn').addEventListener('click', async () => {
+            const checked = document.querySelectorAll('.file-checkbox:checked');
+            if (checked.length === 0) return;
+
+            if (!confirm(`确定要删除选中的 ${checked.length} 个文件吗？`)) return;
+
+            showLoading();
+            const ids = Array.from(checked).map(cb => cb.dataset.id);
+            try {
+                const res = await fetch('/batch_delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+                const data = await res.json();
+                hideLoading();
+                if (data.success) {
+                    showToast(`成功删除 ${data.deleted.length} 个文件`, 'success');
+                    setTimeout(() => location.reload(), 500);
+                }
+            } catch (err) {
+                hideLoading();
+                showToast('批量删除失败: ' + err.message, 'error');
+            }
+        });
+
+        // 批量推送 Kindle
+        document.getElementById('batchPushKindleBtn').addEventListener('click', async () => {
+            const checked = document.querySelectorAll('.file-checkbox:checked');
+            if (checked.length === 0) return;
+
+            if (!kindleConnected) {
+                showToast('Kindle 未连接，请先插入 Kindle', 'error');
+                return;
+            }
+
+            if (!confirm(`确定要推送选中的 ${checked.length} 个文件到 Kindle 吗？`)) return;
+
+            showLoading();
+            const ids = Array.from(checked).map(cb => cb.dataset.id);
+            try {
+                const res = await fetch('/batch_push_kindle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+                const data = await res.json();
+                hideLoading();
+                if (data.success) {
+                    showToast(`批量推送完成：${data.success_count}/${data.total} 成功`, 'success');
+                    setTimeout(() => location.reload(), 500);
+                } else {
+                    showToast('批量推送失败', 'error');
+                }
+            } catch (err) {
+                hideLoading();
+                showToast('批量推送失败：' + err.message, 'error');
+            }
+        });
+
+        // 批量从 Kindle 删除
+        document.getElementById('batchDeleteKindleBtn').addEventListener('click', async () => {
+            const checked = document.querySelectorAll('.file-checkbox:checked');
+            if (checked.length === 0) return;
+
+            if (!kindleConnected) {
+                showToast('Kindle 未连接，请先插入 Kindle', 'error');
+                return;
+            }
+
+            if (!confirm(`确定要从 Kindle 移除选中的 ${checked.length} 个文件吗？`)) return;
+
+            showLoading();
+            const ids = Array.from(checked).map(cb => cb.dataset.id);
+            try {
+                const res = await fetch('/batch_delete_kindle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+                const data = await res.json();
+                hideLoading();
+                if (data.success) {
+                    showToast(`批量移除完成：${data.success_count}/${data.total} 成功`, 'success');
+                    setTimeout(() => location.reload(), 500);
+                } else {
+                    showToast('批量移除失败', 'error');
+                }
+            } catch (err) {
+                hideLoading();
+                showToast('批量移除失败：' + err.message, 'error');
+            }
+        });
+
+        // Kindle 相关功能
+        let kindleConnected = false;
+
+        // 检查 Kindle 状态
+        async function checkKindleStatus() {
+            try {
+                const res = await fetch('/kindle/status');
+                const data = await res.json();
+                kindleConnected = data.connected;
+                updateKindleStatusBar(data);
+            } catch (err) {
+                console.error('Kindle 状态检查失败:', err);
+            }
+        }
+
+        function updateKindleStatusBar(data) {
+            const statusBar = document.getElementById('kindleStatusBar');
+            const statusText = document.getElementById('kindleStatusText');
+            const kindleIcon = document.getElementById('kindleIcon');
+
+            if (data.connected) {
+                statusBar.className = 'kindle-status-bar connected';
+                kindleIcon.className = 'bi bi-hdd-check text-success';
+                statusText.innerHTML = '<strong>Kindle 已连接</strong> - ' + data.path;
+            } else {
+                statusBar.className = 'kindle-status-bar disconnected';
+                kindleIcon.className = 'bi bi-hdd text-danger';
+                statusText.innerHTML = '<strong>Kindle 未连接</strong> - 请插入 Kindle 后刷新';
+            }
+        }
+
+        // 刷新 Kindle 状态
+        document.getElementById('refreshKindleBtn').addEventListener('click', async () => {
+            showLoading();
+            try {
+                await fetch('/kindle/refresh', { method: 'POST' });
+                await checkKindleStatus();
+                showToast('Kindle 状态已刷新', 'success');
+            } catch (err) {
+                showToast('刷新失败：' + err.message, 'error');
+            }
+            hideLoading();
+        });
+
+        // 推送到 Kindle / 从 Kindle 删除
+        document.querySelectorAll('.send-kindle-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const fileId = btn.dataset.id;
+                const isImported = btn.classList.contains('btn-delete-kindle');
+                const actionName = isImported ? '弹出' : '推送';
+
+                if (!kindleConnected) {
+                    showToast('Kindle 未连接，请先插入 Kindle', 'error');
+                    return;
+                }
+
+                showLoading();
+                try {
+                    const url = isImported ? '/kindle/delete/' + fileId : '/kindle/push/' + fileId;
+                    const res = await fetch(url, { method: 'POST' });
+                    const data = await res.json();
+                    console.log(`${actionName} Kindle 响应:`, data);
+
+                    if (data.success) {
+                        showToast(data.message || `${actionName}成功`, 'success');
+                        setTimeout(() => location.reload(), 500);
+                    } else {
+                        showToast(data.message || `${actionName}失败`, 'error');
+                    }
+                } catch (err) {
+                    console.error(`${actionName} Kindle 错误:`, err);
+                    showToast('操作失败：' + err.message, 'error');
+                }
+                hideLoading();
+            });
+        });
+
+        // 页面加载时检查 Kindle 状态
+        checkKindleStatus();
+    </script>
+</body>
+</html>

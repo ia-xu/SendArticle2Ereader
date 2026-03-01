@@ -1,0 +1,5 @@
+*.md
+*.kfx
+*.json
+.claude
+.idea
