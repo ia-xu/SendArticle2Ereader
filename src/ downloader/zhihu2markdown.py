@@ -17,6 +17,7 @@ import time
 import argparse
 from pathlib import Path
 from typing import Optional, Tuple
+from urllib.parse import unquote
 
 import requests
 from bs4 import BeautifulSoup
@@ -24,12 +25,15 @@ from bs4 import BeautifulSoup
 # Windows 编码修复
 if sys.platform == 'win32':
     import codecs
-    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
-    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
+    # 只在直接运行时修复编码，避免在 Flask 等环境中出错
+    if hasattr(sys.stdout, 'buffer') and not isinstance(sys.stdout, codecs.StreamWriter):
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
+    if hasattr(sys.stderr, 'buffer') and not isinstance(sys.stderr, codecs.StreamWriter):
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
     os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 # 默认 Cookie 文件路径
-DEFAULT_COOKIE_FILE = Path(__file__).parent.parent / "config" / "zhihu_cookies.json"
+DEFAULT_COOKIE_FILE = Path(__file__).parent.parent.parent / "config" / "zhihu_cookies.json"
 
 
 class ZhihuAuth:
@@ -348,24 +352,85 @@ class ZhihuToMarkdown:
 
         return md
 
+    def _is_inline_formula(self, img) -> bool:
+        """
+        判断公式图片是否为行内公式
+
+        知乎公式图片的 HTML 结构：
+        - 行内公式: 通常在 <span> 或 <p> 内，前后有文字
+        - 块级公式: 通常在独立的 <div> 或 <figure> 中，独占一行
+        """
+        # 1. 检查 img 标签自身的 class
+        img_class = ' '.join(img.get('class', []))
+        if 'ee' in img_class:
+            return True
+
+        # 2. 检查父元素
+        parent = img.find_parent()
+
+        # 如果在典型行内元素中，是行内公式
+        if parent and parent.name in ['span', 'em', 'strong', 'a']:
+            return True
+
+        # 3. 关键判断：检查公式所在的直接父元素是否还有其他内容
+        # 获取父元素的直接内容（不包括子标签的文字）
+        direct_parent = img.parent
+        if direct_parent:
+            # 检查父元素中公式图片前后是否有其他内容
+            # 获取父元素的所有子节点
+            children = list(direct_parent.children)
+
+            # 如果只有一个子节点（即这个图片），则是块级公式
+            if len(children) == 1:
+                return False
+
+            # 如果有多个子节点，检查是否有文字内容
+            for child in children:
+                if isinstance(child, str):
+                    # 文本节点，检查是否有非空白内容
+                    if child.strip():
+                        return True
+                elif hasattr(child, 'name'):
+                    # 元素节点，检查是否是其他内容
+                    if child != img:
+                        # 如果是文字标签，说明是行内公式
+                        if child.name in ['span', 'em', 'strong', 'a', '#text']:
+                            return True
+                        # 如果有文字内容
+                        if child.get_text().strip():
+                            return True
+
+        # 4. 默认为块级公式
+        return False
+
     def _process_zhihu_elements(self, soup):
         """处理知乎特有的元素"""
-        # 处理 LaTeX 公式
-        for span in soup.find_all('span'):
-            if span.get('class') and 'ztext-math' in span.get('class', []):
-                latex = span.get('data-tex') or span.get_text()
-                if latex:
-                    span.replace_with(f'${latex}$')
-
-        for div in soup.find_all('div'):
-            if div.get('class') and 'ztext-math' in div.get('class', []):
-                latex = div.get('data-tex') or div.get_text()
-                if latex:
-                    div.replace_with(f'\n$$\n{latex}\n$$\n')
-
-        # 处理图片（保留原始 URL）
+        # 处理 LaTeX 公式 - 知乎的公式图片（zhihu.com/equation?tex=...）
         for img in soup.find_all('img'):
-            src = img.get('data-original') or img.get('data-src') or img.get('src')
+            src = img.get('data-original') or img.get('data-src') or img.get('src', '')
+            if 'zhihu.com/equation?tex=' in src:
+                # 提取 tex 参数并 URL 解码
+                match = re.search(r'equation\?tex=([^&]+)', src)
+                if match:
+                    latex_encoded = match.group(1)
+                    # URL 解码，将 + 替换为空格
+                    latex = unquote(latex_encoded.replace('+', ' '))
+
+                    # 判断是行内公式还是块级公式
+                    is_inline = self._is_inline_formula(img)
+
+                    if is_inline:
+                        # 行内公式：使用单美元符号
+                        img.replace_with(f'${latex}$')
+                    else:
+                        # 块级公式：使用双美元符号
+                        img.replace_with(f'\n$$\n{latex}\n$$\n')
+                else:
+                    # 无法解析，移除图片
+                    img.replace_with('')
+                continue  # 已处理，跳过后续的图片处理逻辑
+
+            # 处理普通图片（保留原始 URL）
             if src and src.startswith('//'):
                 src = 'https:' + src
             if src:

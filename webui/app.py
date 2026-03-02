@@ -12,10 +12,30 @@ from datetime import datetime
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for
 from werkzeug.utils import secure_filename
+from bs4 import BeautifulSoup
+
 
 # 添加 src 目录到路径
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
-from md2markdown_v5 import MarkdownToKFX
+
+from src.md2markdown_v5 import MarkdownToKFX
+
+# 知乎下载器导入
+ZHIHU_DOWNLOADER_PATH = Path(__file__).parent.parent / 'src' / ' downloader'
+sys.path.insert(0, str(ZHIHU_DOWNLOADER_PATH))
+try:
+    from zhihu2markdown import ZhihuAuth, ZhihuToMarkdown, ZhihuClient
+    ZHIHU_AVAILABLE = True
+except ImportError as e:
+    print(f"[Warning] Zhihu downloader not available: {e}")
+    ZHIHU_AVAILABLE = False
+
+# 微信下载器导入
+try:
+    from wechat2markdown import WeChatAuth, WeChatToMarkdown, WeChatClient
+    WECHAT_AVAILABLE = True
+except ImportError as e:
+    print(f"[Warning] WeChat downloader not available: {e}")
+    WECHAT_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -636,6 +656,504 @@ def delete_from_kindle_api(file_id):
 def refresh_kindle_status():
     """刷新 Kindle 状态（用于前端轮询后手动刷新）"""
     return jsonify({'success': True})
+
+
+# ==================== 知乎下载 API ====================
+
+ZHIHU_COOKIE_FILE = BASE_DIR / 'config' / 'zhihu_cookies.json'
+WECHAT_COOKIE_FILE = BASE_DIR / 'config' / 'wechat_cookies.json'
+
+@app.route('/zhihu/status')
+def zhihu_status():
+    """检查知乎登录状态"""
+    if not ZHIHU_AVAILABLE:
+        return jsonify({
+            'available': False,
+            'error': 'Zhihu downloader not installed'
+        })
+
+    try:
+        auth = ZhihuAuth(cookie_file=str(ZHIHU_COOKIE_FILE))
+        cookies = auth.load_cookies()
+
+        if not cookies:
+            return jsonify({
+                'available': True,
+                'logged_in': False,
+                'message': '未登录，请先登录知乎'
+            })
+
+        # 检查 Cookie 是否有效
+        is_valid = auth.check_login_status()
+
+        return jsonify({
+            'available': True,
+            'logged_in': is_valid,
+            'message': '已登录' if is_valid else 'Cookie 已过期，请重新登录'
+        })
+    except Exception as e:
+        return jsonify({
+            'available': True,
+            'logged_in': False,
+            'error': str(e)
+        })
+
+
+@app.route('/zhihu/preview', methods=['POST'])
+def zhihu_preview():
+    """预览知乎文章信息（不下载）"""
+    if not ZHIHU_AVAILABLE:
+        return jsonify({'error': 'Zhihu downloader not available'}), 400
+
+    url = request.json.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'URL 不能为空'}), 400
+
+    # 验证 URL
+    if 'zhihu.com' not in url:
+        return jsonify({'error': '请输入有效的知乎链接'}), 400
+
+    try:
+        # 加载 cookies
+        cookies = None
+        has_cookies = False
+        if ZHIHU_COOKIE_FILE.exists():
+            auth = ZhihuAuth(cookie_file=str(ZHIHU_COOKIE_FILE))
+            cookies = auth.load_cookies()
+            has_cookies = bool(cookies)
+
+        client = ZhihuClient(cookies=cookies)
+        article_id = client.extract_article_id(url)
+
+        if not article_id:
+            return jsonify({'error': '无法解析知乎链接，请检查 URL 格式'}), 400
+
+        # 获取文章信息
+        if article_id.startswith('answer_'):
+            answer_id = article_id.replace('answer_', '')
+            api_url = f"https://www.zhihu.com/api/v4/answers/{answer_id}"
+            params = {'include': 'content,author,question'}
+            resp = client.session.get(api_url, params=params, timeout=15)
+        else:
+            api_url = f"https://www.zhihu.com/api/v4/articles/{article_id}"
+            resp = client.session.get(api_url, timeout=15)
+
+        if resp.status_code == 401:
+            return jsonify({
+                'error': '登录已过期，请重新登录知乎账号',
+                'need_login': True
+            }), 401
+
+        if resp.status_code == 404:
+            return jsonify({'error': '文章不存在或已删除'}), 404
+
+        if resp.status_code == 403:
+            return jsonify({'error': '访问被拒绝，请尝试使用浏览器模式'}), 403
+
+        resp.raise_for_status()
+        data = resp.json()
+
+        # 提取关键信息
+        title = data.get('title', 'Untitled')
+        author = data.get('author', {}).get('name', 'Unknown')
+        content = data.get('content') or data.get('html', '')
+        excerpt = content[:300] if content else ''
+
+        # 清理 HTML 标签获取纯文本摘要
+
+        soup = BeautifulSoup(excerpt, 'html.parser')
+        text_excerpt = soup.get_text()[:200]
+
+        return jsonify({
+            'success': True,
+            'article_id': article_id,
+            'title': title,
+            'author': author,
+            'excerpt': text_excerpt + '...',
+            'url': url
+        })
+
+    except requests.RequestException as e:
+        return jsonify({'error': f'网络请求失败: {str(e)}'}), 500
+    except Exception as e:
+        return jsonify({'error': f'预览失败: {str(e)}'}), 500
+
+
+@app.route('/zhihu/download', methods=['POST'])
+def zhihu_download():
+    """下载知乎文章并添加到文件列表"""
+    if not ZHIHU_AVAILABLE:
+        return jsonify({'error': 'Zhihu downloader not available'}), 400
+
+    url = request.json.get('url', '').strip()
+    custom_title = request.json.get('title', '').strip()
+    custom_author = request.json.get('author', '').strip()
+    auto_convert = request.json.get('auto_convert', False)
+
+    if not url:
+        return jsonify({'error': 'URL 不能为空'}), 400
+
+    try:
+        # 加载 cookies
+        cookies = None
+        if ZHIHU_COOKIE_FILE.exists():
+            auth = ZhihuAuth(cookie_file=str(ZHIHU_COOKIE_FILE))
+            cookies = auth.load_cookies()
+
+        # 创建转换器
+        converter = ZhihuToMarkdown(
+            output_dir=str(BASE_DIR),
+            cookies=cookies
+        )
+
+        # 尝试转换文章
+        result = converter.convert(url, use_browser=False)
+
+        # 如果 API 模式失败（可能需要登录），尝试浏览器模式
+        if not result:
+            # 检查是否是登录问题
+            if not cookies:
+                return jsonify({
+                    'error': '请先登录知乎账号',
+                    'need_login': True
+                }), 401
+
+            # 尝试使用浏览器模式
+            print("[Info] API mode failed, trying browser mode...")
+            result = converter.convert(url, use_browser=True)
+
+        if not result:
+            return jsonify({'error': '下载失败，可能是登录已过期或文章不存在'}), 500
+
+        markdown_content, output_file = result
+
+        # 读取下载的文件
+        downloaded_path = Path(output_file)
+        if not downloaded_path.exists():
+            return jsonify({'error': '文件保存失败'}), 500
+
+        # 生成文件 ID
+        file_id = str(uuid.uuid4())[:8]
+
+        # 确定标题和作者
+        title = custom_title or downloaded_path.stem
+        author = custom_author or 'Unknown'
+
+        # 移动文件到 uploads 目录
+        md_path = UPLOAD_FOLDER / f"{file_id}.md"
+        shutil.move(str(downloaded_path), str(md_path))
+
+        # 记录到数据库
+        file_info = {
+            'name': title,
+            'original_name': f"{title}.md",
+            'author': author,
+            'upload_time': datetime.now().isoformat(),
+            'status': 'uploaded',
+            'source': 'zhihu',
+            'source_url': url
+        }
+        update_file_info(file_id, file_info)
+
+        response_data = {
+            'success': True,
+            'file_id': file_id,
+            'name': title,
+            'author': author,
+            'message': '下载成功'
+        }
+
+        # 如果需要自动转换
+        if auto_convert:
+            try:
+                output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+                kfx_converter = MarkdownToKFX(
+                    markdown_file=str(md_path),
+                    output_file=str(output_path),
+                    title=title,
+                    author=author
+                )
+                convert_result = kfx_converter.convert()
+
+                status = 'converted'
+                if convert_result.suffix == '.epub':
+                    epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
+                    if convert_result != epub_path:
+                        shutil.move(str(convert_result), str(epub_path))
+                    status = 'converted_epub'
+
+                file_info['status'] = status
+                file_info['convert_time'] = datetime.now().isoformat()
+                update_file_info(file_id, file_info)
+
+                response_data['status'] = status
+                response_data['message'] = '下载并转换成功'
+            except Exception as e:
+                response_data['convert_error'] = str(e)
+                response_data['message'] = f'下载成功，但转换失败: {str(e)}'
+
+        return jsonify(response_data)
+
+    except Exception as e:
+        error_msg = str(e)
+        # 检查是否是登录相关的错误
+        if '401' in error_msg or 'unauthorized' in error_msg.lower():
+            return jsonify({
+                'error': '登录已过期，请重新登录知乎账号',
+                'need_login': True
+            }), 401
+        return jsonify({'error': f'下载失败: {error_msg}'}), 500
+
+
+        return jsonify({'error': f'下载失败：{error_msg}'}), 500
+
+
+# ==================== 微信下载 API ====================
+
+@app.route('/wechat/status')
+def wechat_status():
+    """检查微信登录状态"""
+    if not WECHAT_AVAILABLE:
+        return jsonify({
+            'available': False,
+            'error': 'WeChat downloader not installed'
+        })
+
+    try:
+        auth = WeChatAuth(cookie_file=str(WECHAT_COOKIE_FILE))
+        cookies = auth.load_cookies()
+
+        if not cookies:
+            return jsonify({
+                'available': True,
+                'logged_in': False,
+                'message': '未登录，请先登录微信公众号'
+            })
+
+        # 检查 Cookie 是否有效
+        is_valid = auth.check_login_status()
+
+        return jsonify({
+            'available': True,
+            'logged_in': is_valid,
+            'message': '已登录' if is_valid else 'Cookie 已过期，请重新登录'
+        })
+    except Exception as e:
+        return jsonify({
+            'available': True,
+            'logged_in': False,
+            'error': str(e)
+        })
+
+
+@app.route('/wechat/preview', methods=['POST'])
+def wechat_preview():
+    """预览微信文章信息（不下载）"""
+    if not WECHAT_AVAILABLE:
+        return jsonify({'error': 'WeChat downloader not available'}), 400
+
+    url = request.json.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'URL 不能为空'}), 400
+
+    # 验证 URL
+    if 'weixin.qq.com' not in url and 'mp.weixin.qq.com' not in url:
+        return jsonify({'error': '请输入有效的微信公众号文章链接'}), 400
+
+    try:
+        # 加载 cookies
+        cookies = None
+        has_cookies = False
+        if WECHAT_COOKIE_FILE.exists():
+            auth = WeChatAuth(cookie_file=str(WECHAT_COOKIE_FILE))
+            cookies = auth.load_cookies()
+            has_cookies = bool(cookies)
+
+        client = WeChatClient(cookies=cookies)
+        article_id = client.extract_article_id(url)
+
+        if not article_id:
+            return jsonify({'error': '无法解析微信链接，请检查 URL 格式'}), 400
+
+        # 使用浏览器模式获取文章信息
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080},
+                locale='zh-CN',
+            )
+
+            # 注入 cookies
+            if cookies:
+                cookies_list = []
+                for name, value in cookies.items():
+                    cookies_list.append({
+                        'name': name,
+                        'value': value,
+                        'domain': '.qq.com',
+                        'path': '/'
+                    })
+                if cookies_list:
+                    context.add_cookies(cookies_list)
+
+            page = context.new_page()
+            page.goto(url, wait_until='networkidle', timeout=60000)
+
+            # 等待内容加载
+            try:
+                page.wait_for_selector('#activity-name, .rich_media_title', timeout=15000)
+            except:
+                pass
+
+            # 获取页面内容
+            html = page.content()
+            browser.close()
+
+            soup = BeautifulSoup(html, 'html.parser')
+
+            # 获取标题
+            title_tag = soup.find('h1', id='activity-name') or soup.find('h1', class_='rich_media_title')
+            if not title_tag:
+                title_tag = soup.select_one('meta[name="description"]') or soup.select_one('title')
+            title = title_tag.get('content', '').strip() if title_tag and title_tag.name == 'meta' else (title_tag.get_text().strip() if title_tag else 'Untitled')
+
+            # 获取作者
+            author_tag = soup.find('div', class_='rich_media_meta_nickname')
+            if not author_tag:
+                author_tag = soup.find('meta', attrs={'name': 'author'})
+            author = author_tag.get_text().strip() if author_tag else 'Unknown'
+
+            # 获取摘要
+            content_div = soup.find('div', id='js_content') or soup.find('div', class_='rich_media_content')
+            excerpt = content_div.get_text()[:300] if content_div else ''
+
+            return jsonify({
+                'success': True,
+                'article_id': article_id,
+                'title': title,
+                'author': author,
+                'excerpt': excerpt[:200] + '...' if excerpt else '',
+                'url': url
+            })
+
+    except Exception as e:
+        error_msg = str(e)
+        if 'playwright' in error_msg.lower():
+            return jsonify({'error': '需要安装 playwright: pip install playwright && playwright install chromium'}), 500
+        return jsonify({'error': f'预览失败：{error_msg}'}), 500
+
+
+@app.route('/wechat/download', methods=['POST'])
+def wechat_download():
+    """下载微信文章并添加到文件列表"""
+    if not WECHAT_AVAILABLE:
+        return jsonify({'error': 'WeChat downloader not available'}), 400
+
+    url = request.json.get('url', '').strip()
+    custom_title = request.json.get('title', '').strip()
+    custom_author = request.json.get('author', '').strip()
+    auto_convert = request.json.get('auto_convert', False)
+
+    if not url:
+        return jsonify({'error': 'URL 不能为空'}), 400
+
+    try:
+        # 加载 cookies
+        cookies = None
+        if WECHAT_COOKIE_FILE.exists():
+            auth = WeChatAuth(cookie_file=str(WECHAT_COOKIE_FILE))
+            cookies = auth.load_cookies()
+
+        # 创建转换器
+        converter = WeChatToMarkdown(
+            output_dir=str(BASE_DIR),
+            cookies=cookies
+        )
+
+        # 执行转换（微信默认使用浏览器模式）
+        result = converter.convert(url, use_browser=True)
+
+        if not result:
+            return jsonify({'error': '下载失败，可能是登录已过期或文章不存在'}), 500
+
+        markdown_content, output_file = result
+
+        # 读取下载的文件
+        downloaded_path = Path(output_file)
+        if not downloaded_path.exists():
+            return jsonify({'error': '文件保存失败'}), 500
+
+        # 生成文件 ID
+        file_id = str(uuid.uuid4())[:8]
+
+        # 确定标题和作者
+        title = custom_title or downloaded_path.stem
+        author = custom_author or 'Unknown'
+
+        # 移动文件到 uploads 目录
+        md_path = UPLOAD_FOLDER / f"{file_id}.md"
+        shutil.move(str(downloaded_path), str(md_path))
+
+        # 记录到数据库
+        file_info = {
+            'name': title,
+            'original_name': f"{title}.md",
+            'author': author,
+            'upload_time': datetime.now().isoformat(),
+            'status': 'uploaded',
+            'source': 'wechat',
+            'source_url': url
+        }
+        update_file_info(file_id, file_info)
+
+        response_data = {
+            'success': True,
+            'file_id': file_id,
+            'name': title,
+            'author': author,
+            'message': '下载成功'
+        }
+
+        # 如果需要自动转换
+        if auto_convert:
+            try:
+                output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+                kfx_converter = MarkdownToKFX(
+                    markdown_file=str(md_path),
+                    output_file=str(output_path),
+                    title=title,
+                    author=author
+                )
+                convert_result = kfx_converter.convert()
+
+                status = 'converted'
+                if convert_result.suffix == '.epub':
+                    epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
+                    if convert_result != epub_path:
+                        shutil.move(str(convert_result), str(epub_path))
+                    status = 'converted_epub'
+
+                file_info['status'] = status
+                file_info['convert_time'] = datetime.now().isoformat()
+                update_file_info(file_id, file_info)
+
+                response_data['status'] = status
+                response_data['message'] = '下载并转换成功'
+            except Exception as e:
+                response_data['convert_error'] = str(e)
+                response_data['message'] = f'下载成功，但转换失败：{str(e)}'
+
+        return jsonify(response_data)
+
+    except Exception as e:
+        error_msg = str(e)
+        if 'playwright' in error_msg.lower():
+            return jsonify({'error': '需要安装 playwright: pip install playwright && playwright install chromium'}), 500
+        return jsonify({'error': f'下载失败：{error_msg}'}), 500
+
 
 if __name__ == '__main__':
     print("=" * 50)

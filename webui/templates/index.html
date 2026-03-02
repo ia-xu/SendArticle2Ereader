@@ -45,7 +45,7 @@
         .upload-zone {
             border: 3px dashed #ddd;
             border-radius: 16px;
-            padding: 40px;
+            padding: 20px;
             text-align: center;
             transition: all 0.3s ease;
             background: #fafafa;
@@ -288,6 +288,158 @@
         .kindle-status-bar.disconnected {
             background: #f8d7da;
         }
+        /* 知乎下载区域样式 */
+        .zhihu-zone {
+            border: 2px solid #0066ff;
+            border-radius: 16px;
+            padding: 25px;
+            margin-top: 25px;
+            background: linear-gradient(135deg, #f0f7ff 0%, #e6f0ff 100%);
+        }
+        .zhihu-zone .zhihu-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .zhihu-zone .zhihu-header i {
+            font-size: 1.5rem;
+            color: #0066ff;
+            margin-right: 10px;
+        }
+        .zhihu-zone .zhihu-header h5 {
+            margin: 0;
+            color: #0066ff;
+        }
+        .zhihu-zone .login-status {
+            margin-left: auto;
+            font-size: 0.9rem;
+        }
+        .zhihu-zone .login-status.logged-in {
+            color: #28a745;
+        }
+        .zhihu-zone .login-status.logged-out {
+            color: #dc3545;
+        }
+        .zhihu-preview-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 15px;
+            border: 1px solid #ddd;
+            display: none;
+        }
+        .zhihu-preview-card.show {
+            display: block;
+        }
+        .zhihu-preview-card .preview-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .zhihu-preview-card .preview-author {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+        .zhihu-preview-card .preview-excerpt {
+            color: #888;
+            font-size: 0.9rem;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .zhihu-login-warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-top: 15px;
+            display: flex;
+            align-items: center;
+        }
+        .zhihu-login-warning i {
+            color: #ffc107;
+            margin-right: 10px;
+            font-size: 1.2rem;
+        }
+        /* 微信下载区域样式 */
+        .wechat-zone {
+            border: 2px solid #07c160;
+            border-radius: 16px;
+            padding: 25px;
+            margin-top: 25px;
+            background: linear-gradient(135deg, #f0fff5 0%, #e6ffed 100%);
+        }
+        .wechat-zone .wechat-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .wechat-zone .wechat-header i {
+            font-size: 1.5rem;
+            color: #07c160;
+            margin-right: 10px;
+        }
+        .wechat-zone .wechat-header h5 {
+            margin: 0;
+            color: #07c160;
+        }
+        .wechat-zone .login-status {
+            margin-left: auto;
+            font-size: 0.9rem;
+        }
+        .wechat-zone .login-status.logged-in {
+            color: #28a745;
+        }
+        .wechat-zone .login-status.logged-out {
+            color: #dc3545;
+        }
+        .wechat-preview-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 15px;
+            border: 1px solid #ddd;
+            display: none;
+        }
+        .wechat-preview-card.show {
+            display: block;
+        }
+        .wechat-preview-card .preview-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .wechat-preview-card .preview-author {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+        .wechat-preview-card .preview-excerpt {
+            color: #888;
+            font-size: 0.9rem;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .wechat-login-warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-top: 15px;
+            display: flex;
+            align-items: center;
+        }
+        .wechat-login-warning i {
+            color: #ffc107;
+            margin-right: 10px;
+            font-size: 1.2rem;
+        }
     </style>
 </head>
 <body>
@@ -324,6 +476,138 @@
                     <div class="col-md-2">
                         <button class="btn btn-primary w-100" id="uploadBtn">
                             <i class="bi bi-upload"></i> 上传
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 知乎下载区域 -->
+        <div class="zhihu-zone" id="zhihuZone">
+            <div class="zhihu-header">
+                <i class="bi bi-zhihu"></i>
+                <h5>知乎文章下载</h5>
+                <div class="login-status" id="zhihuLoginStatus">
+                    <i class="bi bi-arrow-repeat spin"></i> 检查登录状态...
+                </div>
+            </div>
+            <div class="row g-2">
+                <div class="col-md-8">
+                    <input type="text" class="form-control" id="zhihuUrl"
+                           placeholder="输入知乎文章链接，如：https://zhuanlan.zhihu.com/p/123456789">
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-outline-primary w-100" id="zhihuPreviewBtn">
+                        <i class="bi bi-eye"></i> 预览
+                    </button>
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-primary w-100" id="zhihuDownloadBtn">
+                        <i class="bi bi-download"></i> 下载
+                    </button>
+                </div>
+            </div>
+
+            <!-- 登录过期警告 -->
+            <div class="zhihu-login-warning" id="zhihuLoginWarning" style="display: none;">
+                <i class="bi bi-exclamation-triangle"></i>
+                <div>
+                    <strong>登录已过期</strong> - 请在终端运行以下命令重新登录：
+                    <code>python src/\ downloader/zhihu2markdown.py login</code>
+                </div>
+            </div>
+
+            <!-- 文章预览卡片 -->
+            <div class="zhihu-preview-card" id="zhihuPreviewCard">
+                <div class="preview-title" id="zhihuPreviewTitle">文章标题</div>
+                <div class="preview-author" id="zhihuPreviewAuthor">
+                    <i class="bi bi-person"></i> 作者
+                </div>
+                <div class="preview-excerpt" id="zhihuPreviewExcerpt">文章摘要...</div>
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control form-control-sm" id="zhihuCustomTitle"
+                               placeholder="自定义标题 (可选)">
+                    </div>
+                    <div class="col-md-3">
+                        <input type="text" class="form-control form-control-sm" id="zhihuCustomAuthor"
+                               placeholder="自定义作者 (可选)">
+                    </div>
+                    <div class="col-md-3">
+                        <div class="form-check mt-1">
+                            <input class="form-check-input" type="checkbox" id="zhihuAutoConvert" checked>
+                            <label class="form-check-label" for="zhihuAutoConvert">下载后自动转换</label>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-success btn-sm w-100" id="zhihuConfirmDownloadBtn">
+                            <i class="bi bi-check-lg"></i> 确认下载
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 微信下载区域 -->
+        <div class="wechat-zone" id="wechatZone">
+            <div class="wechat-header">
+                <i class="bi bi-wechat"></i>
+                <h5>微信公众号文章下载</h5>
+                <div class="login-status" id="wechatLoginStatus">
+                    <i class="bi bi-arrow-repeat spin"></i> 检查登录状态...
+                </div>
+            </div>
+            <div class="row g-2">
+                <div class="col-md-8">
+                    <input type="text" class="form-control" id="wechatUrl"
+                           placeholder="输入微信公众号文章链接，如：https://mp.weixin.qq.com/s/xxx">
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-outline-success w-100" id="wechatPreviewBtn">
+                        <i class="bi bi-eye"></i> 预览
+                    </button>
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-success w-100" id="wechatDownloadBtn">
+                        <i class="bi bi-download"></i> 下载
+                    </button>
+                </div>
+            </div>
+
+            <!-- 登录过期警告 -->
+            <div class="wechat-login-warning" id="wechatLoginWarning" style="display: none;">
+                <i class="bi bi-exclamation-triangle"></i>
+                <div>
+                    <strong>登录已过期</strong> - 请在终端运行以下命令重新登录：
+                    <code>python src/\ downloader/wechat2markdown.py login</code>
+                </div>
+            </div>
+
+            <!-- 文章预览卡片 -->
+            <div class="wechat-preview-card" id="wechatPreviewCard">
+                <div class="preview-title" id="wechatPreviewTitle">文章标题</div>
+                <div class="preview-author" id="wechatPreviewAuthor">
+                    <i class="bi bi-person"></i> 作者
+                </div>
+                <div class="preview-excerpt" id="wechatPreviewExcerpt">文章摘要...</div>
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control form-control-sm" id="wechatCustomTitle"
+                               placeholder="自定义标题 (可选)">
+                    </div>
+                    <div class="col-md-3">
+                        <input type="text" class="form-control form-control-sm" id="wechatCustomAuthor"
+                               placeholder="自定义作者 (可选)">
+                    </div>
+                    <div class="col-md-3">
+                        <div class="form-check mt-1">
+                            <input class="form-check-input" type="checkbox" id="wechatAutoConvert" checked>
+                            <label class="form-check-label" for="wechatAutoConvert">下载后自动转换</label>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-success btn-sm w-100" id="wechatConfirmDownloadBtn">
+                            <i class="bi bi-check-lg"></i> 确认下载
                         </button>
                     </div>
                 </div>
@@ -1055,6 +1339,334 @@
 
         // 页面加载时检查 Kindle 状态
         checkKindleStatus();
+
+        // ==================== 知乎下载功能 ====================
+        let zhihuLoggedIn = false;
+        let zhihuPreviewData = null;
+
+        // 检查知乎登录状态
+        async function checkZhihuStatus() {
+            const statusEl = document.getElementById('zhihuLoginStatus');
+            const warningEl = document.getElementById('zhihuLoginWarning');
+
+            try {
+                const res = await fetch('/zhihu/status');
+                const data = await res.json();
+
+                if (!data.available) {
+                    statusEl.className = 'login-status logged-out';
+                    statusEl.innerHTML = '<i class="bi bi-x-circle"></i> 下载器不可用';
+                    return;
+                }
+
+                zhihuLoggedIn = data.logged_in;
+
+                if (data.logged_in) {
+                    statusEl.className = 'login-status logged-in';
+                    statusEl.innerHTML = '<i class="bi bi-check-circle-fill"></i> 已登录';
+                    warningEl.style.display = 'none';
+                } else {
+                    statusEl.className = 'login-status logged-out';
+                    statusEl.innerHTML = '<i class="bi bi-exclamation-circle"></i> 未登录';
+                    warningEl.style.display = 'flex';
+                }
+            } catch (err) {
+                statusEl.className = 'login-status logged-out';
+                statusEl.innerHTML = '<i class="bi bi-x-circle"></i> 检查失败';
+                console.error('知乎状态检查失败:', err);
+            }
+        }
+
+        // 预览知乎文章
+        document.getElementById('zhihuPreviewBtn').addEventListener('click', async () => {
+            const url = document.getElementById('zhihuUrl').value.trim();
+            if (!url) {
+                showToast('请输入知乎文章链接', 'error');
+                return;
+            }
+
+            if (!url.includes('zhihu.com')) {
+                showToast('请输入有效的知乎链接', 'error');
+                return;
+            }
+
+            showLoading();
+            const previewCard = document.getElementById('zhihuPreviewCard');
+            const previewBtn = document.getElementById('zhihuPreviewBtn');
+
+            previewBtn.disabled = true;
+            previewBtn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> 获取中...';
+
+            try {
+                const res = await fetch('/zhihu/preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    if (data.need_login) {
+                        document.getElementById('zhihuLoginWarning').style.display = 'flex';
+                    }
+                } else {
+                    zhihuPreviewData = data;
+                    document.getElementById('zhihuPreviewTitle').textContent = data.title;
+                    document.getElementById('zhihuPreviewAuthor').innerHTML = '<i class="bi bi-person"></i> ' + data.author;
+                    document.getElementById('zhihuPreviewExcerpt').textContent = data.excerpt;
+                    document.getElementById('zhihuCustomTitle').value = data.title;
+                    document.getElementById('zhihuCustomAuthor').value = data.author;
+                    previewCard.classList.add('show');
+                }
+            } catch (err) {
+                showToast('预览失败: ' + err.message, 'error');
+            }
+
+            previewBtn.disabled = false;
+            previewBtn.innerHTML = '<i class="bi bi-eye"></i> 预览';
+            hideLoading();
+        });
+
+        // 直接下载（不预览）
+        document.getElementById('zhihuDownloadBtn').addEventListener('click', async () => {
+            const url = document.getElementById('zhihuUrl').value.trim();
+            if (!url) {
+                showToast('请输入知乎文章链接', 'error');
+                return;
+            }
+
+            if (!url.includes('zhihu.com')) {
+                showToast('请输入有效的知乎链接', 'error');
+                return;
+            }
+
+            await downloadZhihuArticle(url, null, null, true);
+        });
+
+        // 确认下载（带预览数据）
+        document.getElementById('zhihuConfirmDownloadBtn').addEventListener('click', async () => {
+            if (!zhihuPreviewData) {
+                showToast('请先预览文章', 'error');
+                return;
+            }
+
+            const customTitle = document.getElementById('zhihuCustomTitle').value.trim();
+            const customAuthor = document.getElementById('zhihuCustomAuthor').value.trim();
+            const autoConvert = document.getElementById('zhihuAutoConvert').checked;
+
+            await downloadZhihuArticle(
+                zhihuPreviewData.url,
+                customTitle || zhihuPreviewData.title,
+                customAuthor || zhihuPreviewData.author,
+                autoConvert
+            );
+        });
+
+        // 下载知乎文章
+        async function downloadZhihuArticle(url, title, author, autoConvert) {
+            showLoading();
+
+            try {
+                const res = await fetch('/zhihu/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url,
+                        title,
+                        author,
+                        auto_convert: autoConvert
+                    })
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    if (data.need_login) {
+                        document.getElementById('zhihuLoginWarning').style.display = 'flex';
+                    }
+                } else {
+                    showToast(data.message || '下载成功', 'success');
+                    // 清空输入
+                    document.getElementById('zhihuUrl').value = '';
+                    document.getElementById('zhihuPreviewCard').classList.remove('show');
+                    zhihuPreviewData = null;
+                    // 刷新页面
+                    setTimeout(() => location.reload(), 500);
+                }
+            } catch (err) {
+                showToast('下载失败: ' + err.message, 'error');
+            }
+
+            hideLoading();
+        }
+
+        // 页面加载时检查知乎登录状态
+        checkZhihuStatus();
+
+        // ==================== 微信下载功能 ====================
+        let wechatLoggedIn = false;
+        let wechatPreviewData = null;
+
+        // 检查微信登录状态
+        async function checkWechatStatus() {
+            const statusEl = document.getElementById('wechatLoginStatus');
+            const warningEl = document.getElementById('wechatLoginWarning');
+
+            try {
+                const res = await fetch('/wechat/status');
+                const data = await res.json();
+
+                if (!data.available) {
+                    statusEl.className = 'login-status logged-out';
+                    statusEl.innerHTML = '<i class="bi bi-x-circle"></i> 下载器不可用';
+                    return;
+                }
+
+                wechatLoggedIn = data.logged_in;
+
+                if (data.logged_in) {
+                    statusEl.className = 'login-status logged-in';
+                    statusEl.innerHTML = '<i class="bi bi-check-circle-fill"></i> 已登录';
+                    warningEl.style.display = 'none';
+                } else {
+                    statusEl.className = 'login-status logged-out';
+                    statusEl.innerHTML = '<i class="bi bi-exclamation-circle"></i> 未登录';
+                    warningEl.style.display = 'flex';
+                }
+            } catch (err) {
+                statusEl.className = 'login-status logged-out';
+                statusEl.innerHTML = '<i class="bi bi-x-circle"></i> 检查失败';
+                console.error('微信状态检查失败:', err);
+            }
+        }
+
+        // 预览微信文章
+        document.getElementById('wechatPreviewBtn').addEventListener('click', async () => {
+            const url = document.getElementById('wechatUrl').value.trim();
+            if (!url) {
+                showToast('请输入微信公众号文章链接', 'error');
+                return;
+            }
+
+            if (!url.includes('weixin.qq.com') && !url.includes('mp.weixin.qq.com')) {
+                showToast('请输入有效的微信公众号文章链接', 'error');
+                return;
+            }
+
+            showLoading();
+            const previewCard = document.getElementById('wechatPreviewCard');
+            const previewBtn = document.getElementById('wechatPreviewBtn');
+
+            previewBtn.disabled = true;
+            previewBtn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> 获取中...';
+
+            try {
+                const res = await fetch('/wechat/preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    if (data.need_login) {
+                        document.getElementById('wechatLoginWarning').style.display = 'flex';
+                    }
+                } else {
+                    wechatPreviewData = data;
+                    document.getElementById('wechatPreviewTitle').textContent = data.title;
+                    document.getElementById('wechatPreviewAuthor').innerHTML = '<i class="bi bi-person"></i> ' + data.author;
+                    document.getElementById('wechatPreviewExcerpt').textContent = data.excerpt;
+                    document.getElementById('wechatCustomTitle').value = data.title;
+                    document.getElementById('wechatCustomAuthor').value = data.author;
+                    previewCard.classList.add('show');
+                }
+            } catch (err) {
+                showToast('预览失败：' + err.message, 'error');
+            }
+
+            previewBtn.disabled = false;
+            previewBtn.innerHTML = '<i class="bi bi-eye"></i> 预览';
+            hideLoading();
+        });
+
+        // 直接下载（不预览）
+        document.getElementById('wechatDownloadBtn').addEventListener('click', async () => {
+            const url = document.getElementById('wechatUrl').value.trim();
+            if (!url) {
+                showToast('请输入微信公众号文章链接', 'error');
+                return;
+            }
+
+            if (!url.includes('weixin.qq.com') && !url.includes('mp.weixin.qq.com')) {
+                showToast('请输入有效的微信公众号文章链接', 'error');
+                return;
+            }
+
+            await downloadWechatArticle(url, null, null, true);
+        });
+
+        // 确认下载（带预览数据）
+        document.getElementById('wechatConfirmDownloadBtn').addEventListener('click', async () => {
+            if (!wechatPreviewData) {
+                showToast('请先预览文章', 'error');
+                return;
+            }
+
+            const customTitle = document.getElementById('wechatCustomTitle').value.trim();
+            const customAuthor = document.getElementById('wechatCustomAuthor').value.trim();
+            const autoConvert = document.getElementById('wechatAutoConvert').checked;
+
+            await downloadWechatArticle(
+                wechatPreviewData.url,
+                customTitle || wechatPreviewData.title,
+                customAuthor || wechatPreviewData.author,
+                autoConvert
+            );
+        });
+
+        // 下载微信文章
+        async function downloadWechatArticle(url, title, author, autoConvert) {
+            showLoading();
+
+            try {
+                const res = await fetch('/wechat/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url,
+                        title,
+                        author,
+                        auto_convert: autoConvert
+                    })
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    if (data.need_login) {
+                        document.getElementById('wechatLoginWarning').style.display = 'flex';
+                    }
+                } else {
+                    showToast(data.message || '下载成功', 'success');
+                    // 清空输入
+                    document.getElementById('wechatUrl').value = '';
+                    document.getElementById('wechatPreviewCard').classList.remove('show');
+                    wechatPreviewData = null;
+                    // 刷新页面
+                    setTimeout(() => location.reload(), 500);
+                }
+            } catch (err) {
+                showToast('下载失败：' + err.message, 'error');
+            }
+
+            hideLoading();
+        }
+
+        // 页面加载时检查微信登录状态
+        checkWechatStatus();
     </script>
 </body>
 </html>

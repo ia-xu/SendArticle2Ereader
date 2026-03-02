@@ -139,11 +139,20 @@ class MarkdownToKFX:
             except:
                 lexer = guess_lexer(code)
 
+            # 检测是否包含中文字符，如果包含则使用中文字体
+            has_chinese = bool(re.search(r'[\u4e00-\u9fff]', code))
+            # Windows 上优先使用支持中文的字体
+            if has_chinese:
+                # 尝试使用支持中文的等宽字体
+                font_name = 'Microsoft YaHei Mono'  # 微软雅黑等宽
+            else:
+                font_name = 'Consolas'
+
             segments = self.split_code_into_segments(code, lang, max_lines=30)
 
             if len(segments) == 1:
                 formatter = ImageFormatter(
-                    font_name='Consolas',
+                    font_name=font_name,
                     font_size=16,
                     line_numbers=True,
                     style='default',
@@ -159,7 +168,7 @@ class MarkdownToKFX:
                 image_paths = []
                 for i, segment in enumerate(segments):
                     formatter = ImageFormatter(
-                        font_name='Consolas',
+                        font_name=font_name,
                         font_size=16,
                         line_numbers=True,
                         style='default',

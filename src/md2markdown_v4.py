@@ -8,7 +8,7 @@ import tempfile
 import hashlib
 import requests
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 from bs4 import BeautifulSoup
 
 # --- 新增依赖 ---
@@ -22,12 +22,14 @@ except ImportError:
     HAS_PYGMENTS = False
 
 # Windows 编码修复
+# Windows 编码修复
 if sys.platform == 'win32':
     import codecs
 
     sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
     sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
     os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 
 
 class MarkdownToKFX:
@@ -183,12 +185,25 @@ class MarkdownToKFX:
             return None
 
     def preprocess_md(self, content):
-        """预处理：清理重影 + 处理代码块转图片"""
+        """预处理：清理重影 + 处理知乎公式 + 处理代码块转图片"""
         # 1. 清理知乎公式重影 (保留你原有的逻辑)
         content = re.sub(r'\$\$(.*?)\$\$\s*\1', r'$$\1$$', content, flags=re.DOTALL)
         content = re.sub(r'\$([^\$\n]+)\$\s*\1', r'$\1$', content)
 
-        # 2. 识别代码块并转为图片
+        # 2. 处理知乎公式图片链接（zhihu.com/equation?tex=...）转为 LaTeX 格式
+        def zhihu_equation_replacer(match):
+            tex_encoded = match.group(1)
+            # URL 解码，将 + 替换为空格
+            latex = unquote(tex_encoded.replace('+', ' '))
+            return f'\n$${latex}$$\n'
+
+        content = re.sub(
+            r'!\[\]\(https?://(?:www\.)?zhihu\.com/equation\?tex=([^)]+)\)',
+            zhihu_equation_replacer,
+            content
+        )
+
+        # 3. 识别代码块并转为图片
         def code_replacer(match):
             lang = match.group(1) or ""
             code = match.group(2).strip()
