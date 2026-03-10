@@ -16,10 +16,11 @@ import time
 import hashlib
 import argparse
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, List
 
 import requests
 from bs4 import BeautifulSoup
+from tqdm.contrib import thread_map
 
 # Windows 编码修复
 if sys.platform == 'win32':
@@ -575,6 +576,52 @@ class WeChatToMarkdown:
             return f"images/{filename}"
         return url
 
+    def _download_images_parallel(self, urls: List[str]) -> Dict[str, str]:
+        """并行下载多个图片，返回 url -> local_path 的映射"""
+        if not urls:
+            return {}
+
+        # 确保图片目录存在
+        if not self.image_dir:
+            if self.file_prefix:
+                self.image_dir = self.output_dir / 'images'
+            else:
+                self.image_dir = self.output_dir / 'database' / 'images'
+            self.image_dir.mkdir(parents=True, exist_ok=True)
+
+        # 准备下载任务参数
+        download_tasks = []
+        for url in urls:
+            if url.startswith('//'):
+                url = 'https:' + url
+            # 识别格式
+            ext = '.jpg'
+            if 'wx_fmt=png' in url or url.endswith('.png'):
+                ext = '.png'
+            elif 'wx_fmt=gif' in url or url.endswith('.gif'):
+                ext = '.gif'
+            elif 'wx_fmt=webp' in url or url.endswith('.webp'):
+                ext = '.webp'
+
+            self.image_count += 1
+            if self.file_prefix:
+                filename = f"{self.file_prefix}_img_{self.image_count:03d}{ext}"
+            else:
+                filename = f"{self.article_prefix}_img_{self.image_count:03d}{ext}" if self.article_prefix else f"img_{self.image_count:03d}{ext}"
+            save_path = self.image_dir / filename
+            download_tasks.append((url, save_path, filename))
+
+        def download_one(task):
+            url, save_path, filename = task
+            if self._download_image(url, save_path):
+                return (url, f"images/{filename}")
+            return (url, url)
+
+        # 使用 thread_map 并行下载，最大 4 线程
+        results = thread_map(download_one, download_tasks, max_workers=4, desc="Downloading images", disable=len(download_tasks) <= 1)
+
+        return dict(results)
+
     def _svg_to_latex(self, svg) -> Optional[str]:
         """
         从微信 SVG 数学公式中解析 LaTeX 代码
@@ -839,6 +886,10 @@ class WeChatToMarkdown:
         <span><svg>...</svg></span>  <- 实际公式
 
         SVG 中包含 aria-label 或 aria-describedby 可能有公式描述
+
+        注意：微信 MathJax 生成的 SVG 可能是嵌套结构，外层 SVG 包含内层 SVG。
+        内层 SVG（带 data-table 或 data-labels 属性）只用于布局，没有完整尺寸信息。
+        我们需要跳过这些嵌套的内部 SVG，只处理最外层的 SVG。
         """
         # 确保 image_dir 存在
         if not self.image_dir:
@@ -853,6 +904,16 @@ class WeChatToMarkdown:
         # 查找所有包含数学内容的 SVG
         # 微信数学公式 SVG 通常有 role="img" 和 aria-label="插图" 或类似属性
         for svg in soup.find_all('svg'):
+            # 【关键修复】跳过嵌套的内部 SVG
+            # 1. 检查是否被包含在另一个 SVG 中
+            if svg.find_parent('svg'):
+                continue
+
+            # 2. 跳过 MathJax 内部布局用的 SVG（data-table 或 data-labels）
+            # 这些是嵌套在外层 SVG 内部的，用于表格布局或标签定位
+            if svg.get('data-table') or svg.get('data-labels'):
+                continue
+
             # 检查是否是数学公式 SVG
             # 特征: role="img", 有 viewBox, 包含 data-mml-node 属性的子元素
             is_math_svg = False
@@ -956,7 +1017,9 @@ class WeChatToMarkdown:
             # 替换为我们干净的 LaTeX 文本
             formula_node.replace_with(replacement)
 
-        # 2. 处理图片和表情
+        # 2. 处理图片和表情（多线程下载）
+        # 先收集所有需要下载的图片
+        img_elements = []
         for img in soup.find_all('img'):
             src = img.get('data-src') or img.get('data-original') or img.get('src')
             if src:
@@ -964,20 +1027,60 @@ class WeChatToMarkdown:
                     alt = img.get('alt', '')
                     img.replace_with(alt if alt else "")
                 else:
-                    local_path = self._process_image_url(src)
-                    img.replace_with(f'![]({local_path})')
+                    img_elements.append((img, src))
 
-        # 3. 处理代码块
-        for pre in soup.find_all('pre'):
-            code = pre.find('code')
-            code_text = code.get_text() if code else pre.get_text()
-            lang = ""
-            if code and code.get('class'):
-                # 提取 language-python 这种类名
-                lang_match = re.search(r'language-(\w+)', ' '.join(code.get('class')))
+        # 并行下载图片
+        if img_elements:
+            urls = [src for _, src in img_elements]
+            local_paths = self._download_images_parallel(urls)
+
+            # 替换图片引用
+            for img, src in img_elements:
+                local_path = local_paths.get(src, src)
+                img.replace_with(f'![]({local_path})')
+
+        # 3. 处理代码块 (优化版)
+        for pre in soup.find_all(['pre', 'section']):
+            # 微信代码块特征：通常带有 code-snippet__js 等 class
+            is_code = 'code-snippet' in str(pre.get('class', '')) or pre.name == 'pre'
+            if not is_code:
+                continue
+
+            # 尝试定位真正的代码容器
+            code_tag = pre.find('code')
+
+            # 核心修复：微信代码块每一行通常是一个 section 或 p
+            # 如果直接 get_text() 会丢失换行。我们需要手动遍历子节点并换行。
+            lines = []
+
+            # 寻找行容器（微信常用 code-snippet__line-content）
+            line_containers = pre.find_all(class_=re.compile(r'line-content|code-snippet__line'))
+
+            if line_containers:
+                for line in line_containers:
+                    lines.append(line.get_text())
+            else:
+                # 备选方案：如果没找到行容器，尝试处理普通的换行
+                raw_text = code_tag.get_text('\n') if code_tag else pre.get_text('\n')
+                lines = raw_text.split('\n')
+
+            # 过滤掉纯数字的行号（微信有些代码块行号在 text 里）
+            clean_lines = []
+            for l in lines:
+                content = l.replace('\u200b', '').strip('\r')
+                clean_lines.append(content)
+
+            code_text = '\n'.join(clean_lines)
+
+            # 自动识别语言（微信通常在 data-lang 属性里）
+            lang = pre.get('data-lang') or ""
+            if not lang and code_tag and code_tag.get('class'):
+                lang_match = re.search(r'language-(\w+)', ' '.join(code_tag.get('class')))
                 if lang_match:
                     lang = lang_match.group(1)
-            pre.replace_with(f'\n```{lang}\n{code_text.strip()}\n```\n')
+
+            # 替换为标准的 Markdown 格式
+            pre.replace_with(f'\n\n```{lang}\n{code_text}\n```\n\n')
 
     def _convert_node(self, node) -> str:
         """递归转换 DOM 节点为 Markdown，清理不可见干扰字符"""

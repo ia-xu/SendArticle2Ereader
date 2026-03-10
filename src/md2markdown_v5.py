@@ -13,6 +13,7 @@ import requests
 from pathlib import Path
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
+from tqdm.contrib.concurrent import thread_map
 
 # 图片处理库
 try:
@@ -53,7 +54,7 @@ class MarkdownToKFX:
         self.toc_items = []  # 存储目录结构
 
     def download_image(self, url):
-        """下载远程图片"""
+        """下载单个远程图片"""
         try:
             parsed = urlparse(url)
             ext = Path(parsed.path).suffix or '.jpg'
@@ -66,7 +67,6 @@ class MarkdownToKFX:
             if local_path.exists():
                 return local_path
 
-            print(f"  [Image] Downloading: {url}")
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             response = requests.get(url, headers=headers, timeout=20)
             response.raise_for_status()
@@ -77,6 +77,18 @@ class MarkdownToKFX:
         except Exception as e:
             print(f"  [Warning] Failed to download {url}: {e}")
             return None
+
+    def download_images_parallel(self, urls):
+        """并行下载多个图片，返回 url -> local_path 的映射"""
+        if not urls:
+            return {}
+
+        def download_one(url):
+            local_path = self.download_image(url)
+            return (url, local_path)
+
+        results = thread_map(download_one, urls, max_workers=4, desc="Downloading images", disable=len(urls) <= 1)
+        return {url: path for url, path in results if path is not None}
 
     def convert_image_for_kindle(self, src_path, dest_dir):
         """转换图片为 Kindle 兼容格式（GIF/WebP -> PNG）"""
@@ -431,9 +443,20 @@ class MarkdownToKFX:
         image_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
         images = re.findall(image_pattern, md_content)
 
+        # 分离远程图片和本地图片
+        remote_urls = []
         for alt_text, img_url in images:
             if img_url.startswith(('http://', 'https://')):
-                local_path = self.download_image(img_url)
+                remote_urls.append(img_url)
+
+        # 并行下载远程图片
+        if remote_urls:
+            url_to_path = self.download_images_parallel(remote_urls)
+
+        # 处理所有图片引用
+        for alt_text, img_url in images:
+            if img_url.startswith(('http://', 'https://')):
+                local_path = url_to_path.get(img_url)
                 if local_path:
                     # 转换图片格式
                     converted_name = self.convert_image_for_kindle(local_path, self.images_dir)
