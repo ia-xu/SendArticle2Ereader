@@ -20,7 +20,7 @@ from typing import Optional, Tuple, Dict, List
 
 import requests
 from bs4 import BeautifulSoup
-from tqdm.contrib import thread_map
+from tqdm.contrib.concurrent import thread_map
 
 # Windows 编码修复
 if sys.platform == 'win32':
@@ -108,6 +108,11 @@ SPECIAL_CHAR_MAP = {
     '230B': r'\rfloor',
     '7C': '|',
     '2016': r'\|',
+    '22BA': r'^\top',   # 常见的转置符号码点
+    '2192': r'\rightarrow',
+    '2190': r'\leftarrow',
+
+
 }
 
 # 需要映射为普通 ASCII 的 Unicode 数学字母（Mathematical Alphanumeric Symbols）
@@ -723,7 +728,15 @@ class WeChatToMarkdown:
                 parts = split_subscript_children(node)
                 if len(parts) >= 2:
                     base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
-                    sup = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+                    # 微信 SVG 中可能将 ^ 作为单独的 mo 节点
+                    # 如果 parts[1] 是 ^ 符号，需要跳过它，使用 parts[2] 作为上标
+                    sup_idx = 1
+                    if len(parts) >= 3:
+                        # 检查 parts[1] 是否是 ^ 符号
+                        check_text = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+                        if check_text.strip() in ['^', '^\n', '\n^']:
+                            sup_idx = 2
+                    sup = ''.join(parse_node(c, mml_node) for c in parts[sup_idx].children) if parts[sup_idx].name == 'g' else parse_node(parts[sup_idx], mml_node)
                     return f'{base}^{{{sup}}}'
                 return children_text
             elif mml_node == 'msqrt':  # 处理平方根节点
@@ -783,9 +796,21 @@ class WeChatToMarkdown:
             elif mml_node == 'mover':  # 上标注释
                 parts = split_subscript_children(node)
                 if len(parts) >= 2:
-                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
-                    over = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
-                    return f'\\overline{{{base}}}' if over == '-' else f'{{{base}}}^{{{over}}}'
+                    # parts[0] 是底座，parts[1] 是上面的装饰
+                    base = ''.join(
+                        parse_node(c, mml_node) for c in (parts[0].children if parts[0].name == 'g' else [parts[0]]))
+                    over_raw = ''.join(
+                        parse_node(c, mml_node) for c in (parts[1].children if parts[1].name == 'g' else [parts[1]]))
+
+                    # 关键逻辑：识别并转换微信的长箭头零件
+                    if r'\rightarrow' in over_raw:
+                        return f'\\overrightarrow{{{base.strip()}}}'
+                    if r'\leftarrow' in over_raw:
+                        return f'\\overleftarrow{{{base.strip()}}}'
+                    if over_raw.strip() in ['-', r'\text{-}']:
+                        return f'\\overline{{{base.strip()}}}'
+
+                    return f'{{{base}}}^{{{over_raw}}}'
                 return children_text
             elif mml_node == 'munderover':  # 上下标注释（如求和符号）
                 parts = split_subscript_children(node)
@@ -1166,9 +1191,9 @@ class WeChatToMarkdown:
 
         # 最终清洗：压缩连续空行
         md = re.sub(r'\n{3,}', '\n\n', md)
-
         if title:
             md = f"# {title}\n\n{md.strip()}"
+
         return md
 
     def convert(self, url: str, use_browser: bool = True) -> Optional[Tuple[str, str]]:

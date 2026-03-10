@@ -365,12 +365,21 @@ class MarkdownToKFX:
         toc_items = []
         # 匹配 ## 到 ###### 的标题
         pattern = r'^(#{2,6})\s+(.+)$'
+        # 用于追踪锚点计数，避免重复
+        anchor_count = {}
 
         for match in re.finditer(pattern, md_content, re.MULTILINE):
             level = len(match.group(1))
             title = match.group(2).strip()
             # 使用 sanitize_anchor 生成 KFX 兼容的锚点 ID
             anchor = self.sanitize_anchor(title)
+
+            # 处理锚点重复：添加序号后缀
+            if anchor in anchor_count:
+                anchor_count[anchor] += 1
+                anchor = f"{anchor}-{anchor_count[anchor]}"
+            else:
+                anchor_count[anchor] = 0
 
             toc_items.append({
                 'level': level,
@@ -381,44 +390,62 @@ class MarkdownToKFX:
         return toc_items
 
     def generate_toc_html(self, toc_items):
-        """生成目录的 HTML"""
+        """生成目录的 HTML（正确的嵌套结构）"""
         if not toc_items:
             return ""
 
         html_parts = ['<div class="toc">', '<h2>目录</h2>', '<ul>']
-
+        open_ul_count = 1  # 追踪打开的 ul 标签数量
         prev_level = 2
+
         for item in toc_items:
             level = item['level']
 
             # 处理层级变化
             if level > prev_level:
+                # 进入更深层级：先关闭前一个 li，再打开新的 ul
+                html_parts[-1] = html_parts[-1].replace('</li>', '')  # 移除前一个 li 的关闭标签
                 for _ in range(level - prev_level):
                     html_parts.append('<ul>')
+                    open_ul_count += 1
             elif level < prev_level:
+                # 返回更浅层级：关闭多余的 ul 和 li
                 for _ in range(prev_level - level):
-                    html_parts.append('</ul>')
+                    html_parts.append('</ul></li>')
+                    open_ul_count -= 1
 
             html_parts.append(f'<li><a href="#{item["anchor"]}">{item["title"]}</a></li>')
             prev_level = level
 
         # 关闭所有打开的 ul 标签
-        while prev_level > 2:
+        while open_ul_count > 0:
             html_parts.append('</ul>')
-            prev_level -= 1
+            open_ul_count -= 1
 
-        html_parts.append('</ul></div>')
+        html_parts.append('</div>')
         return '\n'.join(html_parts)
 
     def add_anchor_ids(self, md_content):
-        """为 Markdown 标题添加锚点 ID"""
-        def add_id(match):
-            level = match.group(1)
-            title = match.group(2).strip()
-            anchor = self.sanitize_anchor(title)
-            return f'{level} {title} {{#{anchor}}}'
+        """为 Markdown 标题添加锚点 ID，使用已提取的 toc_items 确保锚点一致"""
+        if not self.toc_items:
+            return md_content
 
+        # 创建锚点查找表：标题 -> 锚点
+        # 注意：由于可能存在相同标题，需要按顺序匹配
+        toc_idx = 0
         pattern = r'^(#{2,6})\s+(.+)$'
+
+        def add_id(match):
+            nonlocal toc_idx
+            if toc_idx < len(self.toc_items):
+                item = self.toc_items[toc_idx]
+                toc_idx += 1
+                level = match.group(1)
+                title = match.group(2).strip()
+                anchor = item['anchor']
+                return f'{level} {title} {{#{anchor}}}'
+            return match.group(0)
+
         return re.sub(pattern, add_id, md_content, flags=re.MULTILINE)
 
     def markdown_to_html(self):
@@ -450,6 +477,7 @@ class MarkdownToKFX:
                 remote_urls.append(img_url)
 
         # 并行下载远程图片
+        url_to_path = {}
         if remote_urls:
             url_to_path = self.download_images_parallel(remote_urls)
 

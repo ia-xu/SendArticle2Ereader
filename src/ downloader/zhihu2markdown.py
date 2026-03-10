@@ -599,6 +599,7 @@ class ZhihuToMarkdown:
             return None
 
         title = None
+        author = None
         html_content = None
 
         # 首先尝试 API
@@ -607,8 +608,10 @@ class ZhihuToMarkdown:
             if data:
                 title = data.get('title', 'Untitled')
                 html_content = data.get('content') or data.get('html', '')
-                author = data.get('author', {}).get('name', 'Unknown')
-                print(f"[API] Article: {title} by {author}")
+                # 获取作者信息
+                author_info = data.get('author', {})
+                author = author_info.get('name') if isinstance(author_info, dict) else None
+                print(f"[API] Article: {title} by {author or 'Unknown'}")
 
         # 如果 API 失败，使用浏览器
         if not html_content:
@@ -619,6 +622,29 @@ class ZhihuToMarkdown:
                 title_tag = soup.find('h1', class_='Post-Title') or soup.find('h1')
                 if title_tag:
                     title = title_tag.get_text().strip()
+
+                # 尝试从多种来源获取作者信息
+                # 1. 尝试从 AuthorInfo 组件获取
+                author_name_tag = soup.find('a', class_='AuthorInfo-name')
+                if author_name_tag:
+                    author = author_name_tag.get_text().strip()
+                # 2. 尝试从 Post-Author 获取
+                if not author:
+                    author_tag = soup.find('div', class_='Post-Author')
+                    if author_tag:
+                        name_tag = author_tag.find('a')
+                        if name_tag:
+                            author = name_tag.get_text().strip()
+                # 3. 尝试从 meta 标签获取
+                if not author:
+                    meta_author = soup.find('meta', {'name': 'author'}) or soup.find('meta', {'property': 'author'})
+                    if meta_author:
+                        author = meta_author.get('content', '').strip()
+                # 4. 尝试从 UserLink 获取
+                if not author:
+                    user_link = soup.find('a', class_='UserLink-link')
+                    if user_link:
+                        author = user_link.get_text().strip()
 
                 content_div = (
                     soup.find('div', class_='Post-RichText') or
@@ -639,7 +665,11 @@ class ZhihuToMarkdown:
         markdown = self.html_to_markdown(html_content, title)
 
         # 添加元信息
-        meta = f"---\ntitle: {title}\nsource: {url}\n---\n\n"
+        meta_parts = [f"title: {title}"]
+        if author:
+            meta_parts.append(f"author: {author}")
+        meta_parts.append(f"source: {url}")
+        meta = "---\n" + "\n".join(meta_parts) + "\n---\n\n"
         markdown = meta + markdown
 
         # 保存文件
