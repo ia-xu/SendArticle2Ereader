@@ -322,9 +322,10 @@ class ZhihuClient:
 class ZhihuToMarkdown:
     """知乎文章转 Markdown"""
 
-    def __init__(self, output_dir: str = ".", cookies: Optional[dict] = None):
+    def __init__(self, output_dir: str = ".", cookies: Optional[dict] = None, file_prefix: str = None):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.file_prefix = file_prefix  # 可选的文件前缀（用于 file_id）
 
         self.client = ZhihuClient(cookies=cookies)
 
@@ -642,9 +643,15 @@ class ZhihuToMarkdown:
         markdown = meta + markdown
 
         # 保存文件
-        safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)
-        safe_title = safe_title[:50]
-        output_file = self.output_dir / 'database' / f"{safe_title}.md"
+        # 如果有 file_prefix，直接保存到 output_dir 根目录，文件名为 {file_prefix}.md
+        # 否则保存到 output_dir/database/ 目录
+        if self.file_prefix:
+            output_file = self.output_dir / f"{self.file_prefix}.md"
+        else:
+            safe_title = re.sub(r'[<>"\\|?*]', '_', title)
+            safe_title = safe_title[:50]
+            output_file = self.output_dir / 'database' / f"{safe_title}.md"
+            output_file.parent.mkdir(parents=True, exist_ok=True)
 
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(markdown)

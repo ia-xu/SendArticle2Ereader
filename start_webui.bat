@@ -7,5 +7,5 @@ echo.
 echo Starting server...
 echo.
 cd /d "%~dp0"
-python webui\app.py
+conda activate anxu && python webui\app.py
 pause

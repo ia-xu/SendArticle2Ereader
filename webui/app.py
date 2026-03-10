@@ -461,6 +461,12 @@ def delete_file(file_id):
         if path.exists():
             path.unlink()
 
+    # 删除关联的图片文件（微信/知乎文章下载的图片）
+    images_dir = UPLOAD_FOLDER / 'images'
+    if images_dir.exists():
+        for img_file in images_dir.glob(f"{file_id}_*"):
+            img_file.unlink()
+
     # 从数据库删除
     delete_file_from_db(file_id)
 
@@ -509,7 +515,8 @@ def batch_convert():
                 markdown_file=str(md_path),
                 output_file=str(output_path),
                 title=info.get('name', 'Untitled'),
-                author=info.get('author', 'Unknown')
+                author=info.get('author', 'Unknown'),
+                skip_mathml=True  # KFX 不支持复杂 MathML
             )
             result = converter.convert()
 
@@ -786,8 +793,8 @@ def zhihu_download():
         return jsonify({'error': 'Zhihu downloader not available'}), 400
 
     url = request.json.get('url', '').strip()
-    custom_title = request.json.get('title', '').strip()
-    custom_author = request.json.get('author', '').strip()
+    custom_title = request.json.get('title') or ''
+    custom_author = request.json.get('author') or ''
     auto_convert = request.json.get('auto_convert', False)
 
     if not url:
@@ -1053,8 +1060,8 @@ def wechat_download():
         return jsonify({'error': 'WeChat downloader not available'}), 400
 
     url = request.json.get('url', '').strip()
-    custom_title = request.json.get('title', '').strip()
-    custom_author = request.json.get('author', '').strip()
+    custom_title = request.json.get('title') or ''
+    custom_author = request.json.get('author') or ''
     auto_convert = request.json.get('auto_convert', False)
 
     if not url:
@@ -1067,10 +1074,15 @@ def wechat_download():
             auth = WeChatAuth(cookie_file=str(WECHAT_COOKIE_FILE))
             cookies = auth.load_cookies()
 
-        # 创建转换器
+        # 生成文件 ID（提前生成，用于建立独立的 images 目录）
+        file_id = str(uuid.uuid4())[:8]
+
+        # 创建转换器，直接输出到 uploads 目录
+        # 这样 markdown 和 images 会在同一目录下，确保相对路径正确
         converter = WeChatToMarkdown(
-            output_dir=str(BASE_DIR),
-            cookies=cookies
+            output_dir=str(UPLOAD_FOLDER),
+            cookies=cookies,
+            file_prefix=file_id  # 使用 file_id 作为文件前缀
         )
 
         # 执行转换（微信默认使用浏览器模式）
@@ -1086,16 +1098,22 @@ def wechat_download():
         if not downloaded_path.exists():
             return jsonify({'error': '文件保存失败'}), 500
 
-        # 生成文件 ID
-        file_id = str(uuid.uuid4())[:8]
+        # 从 markdown YAML front matter 中提取标题
+        extracted_title = file_id  # 默认使用 file_id
+        if markdown_content.startswith('---'):
+            import re
+            title_match = re.search(r'^title:\s*(.+)$', markdown_content, re.MULTILINE)
+            if title_match:
+                extracted_title = title_match.group(1).strip()
 
         # 确定标题和作者
-        title = custom_title or downloaded_path.stem
+        title = custom_title or extracted_title
         author = custom_author or 'Unknown'
 
-        # 移动文件到 uploads 目录
+        # 重命名文件为 file_id.md（如果还不是）
         md_path = UPLOAD_FOLDER / f"{file_id}.md"
-        shutil.move(str(downloaded_path), str(md_path))
+        if downloaded_path != md_path:
+            shutil.move(str(downloaded_path), str(md_path))
 
         # 记录到数据库
         file_info = {

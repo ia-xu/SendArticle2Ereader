@@ -28,6 +28,142 @@ if sys.platform == 'win32':
 # 默认 Cookie 文件路径
 DEFAULT_COOKIE_FILE = Path(__file__).parent.parent.parent / "config" / "wechat_cookies.json"
 
+# 特殊字符映射表（用于处理 LaTeX 转义字符和非标准 Unicode 数学字母）
+# 大部分数学字母符号位于 Unicode 的 Mathematical Alphanumeric Symbols 区块 (U+1D400-U+1D7FF)
+SPECIAL_CHAR_MAP = {
+    # 希腊字母（粗体/斜体变体）
+    '1D6FD': r'\beta',
+    '1D6FC': r'\alpha',
+    '1D6FE': r'\gamma',
+    '1D6FF': r'\delta',
+    '1D700': r'\epsilon',
+    '1D701': r'\zeta',
+    '1D702': r'\eta',
+    '1D703': r'\theta',
+    '1D707': r'\kappa',
+    '1D708': r'\lambda',
+    '1D70F': r'\xi',
+    '1D711': r'\pi',
+    '1D712': r'\rho',
+    '1D716': r'\sigma',
+    '1D719': r'\tau',
+    '1D71D': r'\phi',
+    '1D71C': r'\chi',
+    '1D71B': r'\psi',
+    '1D71F': r'\omega',
+    '1D6A8': r'\Beta',
+    '1D6A9': r'\Gamma',
+    '1D6AA': r'\Delta',
+    '1D6AB': r'\Epsilon',
+    '1D6AC': r'\Zeta',
+    '1D6AD': r'\Eta',
+    '1D6AE': r'\Theta',
+    '1D6B2': r'\Kappa',
+    '1D6B3': r'\Lambda',
+    '1D6BA': r'\Xi',
+    '1D6BC': r'\Pi',
+    '1D6BD': r'\Rho',
+    '1D6C2': r'\Sigma',
+    '1D6C4': r'\Tau',
+    '1D6C8': r'\Phi',
+    '1D6C9': r'\Chi',
+    '1D6CA': r'\Psi',
+    '1D6CB': r'\Omega',
+    # 数学斜体字母 (U+1D434-U+1D467 为大写，U+1D468-U+1D49B 为小写)
+    '1D434': 'A', '1D435': 'B', '1D436': 'C', '1D437': 'D', '1D438': 'E',
+    '1D439': 'F', '1D43A': 'G', '1D43B': 'H', '1D43C': 'I', '1D43D': 'J',
+    '1D43E': 'K', '1D43F': 'L', '1D440': 'M', '1D441': 'N', '1D442': 'O',
+    '1D443': 'P', '1D444': 'Q', '1D445': 'R', '1D446': 'S', '1D447': 'T',
+    '1D448': 'U', '1D449': 'V', '1D44A': 'W', '1D44B': 'X', '1D44C': 'Y',
+    '1D44D': 'Z',
+    '1D44E': 'a', '1D44F': 'b', '1D450': 'c', '1D451': 'd', '1D452': 'e',
+    '1D453': 'f', '1D454': 'g', '1D455': 'h', '1D456': 'i', '1D457': 'j',
+    '1D458': 'k', '1D459': 'l', '1D45A': 'm', '1D45B': 'n', '1D45C': 'o',
+    '1D45D': 'p', '1D45E': 'q', '1D45F': 'r', '1D460': 's', '1D461': 't',
+    '1D462': 'u', '1D463': 'v', '1D464': 'w', '1D465': 'x', '1D466': 'y',
+    '1D467': 'z',
+    # 特殊数学符号
+    '2212': '-',   # 减号
+    '22C5': r'\cdot',  # 点乘
+    '22A4': r'\top',   # 转置符号
+    '2208': r'\in',    # 属于
+    '2209': r'\notin', # 不属于
+    '221A': r'\sqrt',  # 平方根
+    '2211': r'\sum',   # 求和
+    '220F': r'\prod',  # 乘积
+    '222B': r'\int',   # 积分
+    '2202': r'\partial', # 偏导
+    '2207': r'\nabla', # 梯度
+    '221E': r'\infty', # 无穷
+    '2260': r'\neq',   # 不等于
+    '2264': r'\leq',   # 小于等于
+    '2265': r'\geq',   # 大于等于
+    '2248': r'\approx', # 约等于
+    '221D': r'\propto', # 正比
+    # 括号
+    '23B0': r'\lceil',
+    '23B1': r'\rceil',
+    '230A': r'\lfloor',
+    '230B': r'\rfloor',
+    '7C': '|',
+    '2016': r'\|',
+}
+
+# 需要映射为普通 ASCII 的 Unicode 数学字母（Mathematical Alphanumeric Symbols）
+# 这些是将普通字母映射到其 Unicode 数学变体的表
+MATH_ALPHANUMERIC_MAP = {}
+
+# 大写斜体 A-Z (U+1D434-U+1D44D) -> A-Z
+for i, code in enumerate(range(0x1D434, 0x1D44E)):
+    MATH_ALPHANUMERIC_MAP[f'{code:X}'] = chr(ord('A') + i)
+
+# 小写斜体 a-z (U+1D44E-U+1D467) -> a-z
+for i, code in enumerate(range(0x1D44E, 0x1D468)):
+    MATH_ALPHANUMERIC_MAP[f'{code:X}'] = chr(ord('a') + i)
+
+# 大写粗体 A-Z (U+1D400-U+1D419) -> A-Z
+for i, code in enumerate(range(0x1D400, 0x1D41A)):
+    MATH_ALPHANUMERIC_MAP[f'{code:X}'] = chr(ord('A') + i)
+
+# 小写粗体 a-z (U+1D41A-U+1D433) -> a-z
+for i, code in enumerate(range(0x1D41A, 0x1D434)):
+    MATH_ALPHANUMERIC_MAP[f'{code:X}'] = chr(ord('a') + i)
+
+# 大写粗体斜体 A-Z (U+1D468-U+1D481) -> A-Z
+for i, code in enumerate(range(0x1D468, 0x1D482)):
+    MATH_ALPHANUMERIC_MAP[f'{code:X}'] = chr(ord('A') + i)
+
+# 小写粗体斜体 a-z (U+1D482-U+1D49B) -> a-z
+for i, code in enumerate(range(0x1D482, 0x1D49C)):
+    MATH_ALPHANUMERIC_MAP[f'{code:X}'] = chr(ord('a') + i)
+
+# 大写等宽 A-Z (U+1D670-U+1D689) -> A-Z
+for i, code in enumerate(range(0x1D670, 0x1D68A)):
+    MATH_ALPHANUMERIC_MAP[f'{code:X}'] = chr(ord('A') + i)
+
+# 小写等宽 a-z (U+1D68A-U+1D6A3) -> a-z
+for i, code in enumerate(range(0x1D68A, 0x1D6A4)):
+    MATH_ALPHANUMERIC_MAP[f'{code:X}'] = chr(ord('a') + i)
+
+# 希腊字母粗体/斜体变体
+# 大写粗体希腊字母 (U+1D6A8-U+1D6C0 部分)
+GREEK_BOLD_MAP = {
+    '1D6A8': 'A', '1D6A9': 'B', '1D6AA': r'\Gamma', '1D6AB': 'E',
+    '1D6AC': 'Z', '1D6AD': 'H', '1D6AE': r'\Theta', '1D6B2': 'K',
+    '1D6B3': r'\Lambda', '1D6BA': r'\Xi', '1D6BC': r'\Pi', '1D6BD': 'P',
+    '1D6C2': r'\Sigma', '1D6C4': 'T', '1D6C8': r'\Phi', '1D6C9': 'X',
+    '1D6CA': r'\Psi', '1D6CB': r'\Omega',
+}
+
+# 小写粗体希腊字母 (U+1D6CE-U+1D6E6 部分)
+GREEK_BOLD_SMALL_MAP = {
+    '1D6CE': r'\alpha', '1D6CF': r'\beta', '1D6D0': r'\gamma', '1D6D1': r'\delta',
+    '1D6D2': r'\epsilon', '1D6D3': r'\zeta', '1D6D4': r'\eta', '1D6D5': r'\theta',
+    '1D6D9': r'\kappa', '1D6DA': r'\lambda', '1D6DF': r'\xi', '1D6E1': r'\pi',
+    '1D6E2': r'\rho', '1D6E6': r'\sigma', '1D6E8': r'\tau', '1D6EC': r'\phi',
+    '1D6EB': r'\chi', '1D6ED': r'\psi', '1D6EF': r'\omega',
+}
+
 
 class WeChatAuth:
     """微信登录认证模块"""
@@ -239,7 +375,7 @@ class WeChatClient:
                     cookies.append({
                         'name': name,
                         'value': value,
-                        'domain': '.weixin.qq.com',
+                        'domain': '.qq.com',
                         'path': '/'
                     })
                 if cookies:
@@ -290,10 +426,11 @@ class WeChatToMarkdown:
     4. 将数学公式 SVG 渲染为 PNG 图片保存。
     """
 
-    def __init__(self, output_dir: str = ".", cookies: Optional[dict] = None, download_images: bool = True):
+    def __init__(self, output_dir: str = ".", cookies: Optional[dict] = None, download_images: bool = True, file_prefix: str = None):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.download_images = download_images
+        self.file_prefix = file_prefix  # 可选的文件前缀（用于 file_id）
         self.image_dir = None
         self.image_count = 0
         self.formula_count = 0
@@ -307,6 +444,10 @@ class WeChatToMarkdown:
         """延迟加载 SVG 转换器"""
         if self._svg_converter is None:
             try:
+                lib_path = r'C:\Program Files\GTK3-Runtime Win64\bin'
+                if lib_path not in os.environ['PATH']:
+                    os.environ['PATH'] = lib_path + os.pathsep + os.environ.get('PATH', '')
+
                 import cairosvg
                 self._svg_converter = 'cairosvg'
             except ImportError:
@@ -321,33 +462,51 @@ class WeChatToMarkdown:
         return self._svg_converter
 
     def _svg_to_png(self, svg_content: str, save_path: Path) -> bool:
-        """将 SVG 内容转换为 PNG 图片"""
+        """将 SVG 内容转换为 PNG 图片（添加白色背景）"""
         converter = self._get_svg_converter()
         if not converter:
             return False
 
         try:
-            # 确保 SVG 有正确的尺寸
-            # 微信 SVG 通常有 viewBox，但可能缺少明确的 width/height
-            if 'viewBox=' in svg_content and ('width=' not in svg_content or 'height=' not in svg_content):
-                # 从 viewBox 提取尺寸
-                match = re.search(r'viewBox="([\d.\-\s]+)"', svg_content)
-                if match:
-                    values = match.group(1).split()
-                    if len(values) == 4:
-                        width = float(values[2]) - float(values[0])
-                        height = float(values[3]) - float(values[1])
-                        # 缩放到合适大小 (基于 ex 单位，通常 1ex ≈ 8px，放大到 2x 以提高清晰度)
-                        scale = 2.0
-                        width_px = int(width * scale)
-                        height_px = int(height * scale)
-                        # 插入 width 和 height 属性
-                        svg_content = svg_content.replace('<svg', f'<svg width="{width_px}" height="{height_px}"', 1)
+            # 解析 viewBox 参数
+            viewBox_match = re.search(r'viewBox="([\d.\-\s]+)"', svg_content)
+            if viewBox_match:
+                values = viewBox_match.group(1).split()
+                if len(values) == 4:
+                    vb_x = float(values[0])  # min-x
+                    vb_y = float(values[1])  # min-y
+                    vb_width = float(values[2])  # width
+                    vb_height = float(values[3])  # height
+
+                    # 1. 添加白色背景矩形（使用 viewBox 的实际坐标范围）
+                    # 微信 SVG 可能有负数的 y 坐标，需要正确设置背景位置
+                    svg_match = re.search(r'<svg[^>]*>', svg_content)
+                    if svg_match:
+                        svg_start_tag = svg_match.group(0)
+                        # 背景矩形覆盖整个 viewBox 区域
+                        bg_rect = f'<rect x="{vb_x}" y="{vb_y}" width="{vb_width}" height="{vb_height}" fill="white"/>'
+                        svg_content = svg_content.replace(svg_start_tag, svg_start_tag + bg_rect, 1)
+
+                    # 2. 缩放尺寸计算
+                    scale = 2.0
+                    width_px = int(abs(vb_width) * scale)
+                    height_px = int(abs(vb_height) * scale)
+
+                    # cairosvg 使用 scale 参数缩放，不需要显式设置 width/height
+                    # svglib 需要显式的 width/height
+                    if converter == 'svglib' and 'width=' not in svg_content:
+                        svg_content = re.sub(
+                            r'(<svg[^>]*)>',
+                            rf'\1 width="{width_px}" height="{height_px}">',
+                            svg_content,
+                            count=1
+                        )
 
             if converter == 'cairosvg':
                 import cairosvg
+                # cairosvg 会自动从 viewBox 计算尺寸，使用 scale 参数提高清晰度
                 cairosvg.svg2png(bytestring=svg_content.encode('utf-8'), write_to=str(save_path),
-                                  scale=2)  # 2x scale for better quality
+                                  scale=2)
             else:  # svglib
                 from svglib.svglib import svg2rlg
                 from reportlab.graphics import renderPM
@@ -387,8 +546,12 @@ class WeChatToMarkdown:
             url = 'https:' + url
 
         if not self.image_dir:
-            # 统一放在 output_dir/database/images 目录下
-            self.image_dir = self.output_dir / 'database' / 'images'
+            # 如果有 file_prefix，使用 output_dir/images 目录（与 markdown 同级的 images 目录）
+            # 否则使用 output_dir/database/images 目录
+            if self.file_prefix:
+                self.image_dir = self.output_dir / 'images'
+            else:
+                self.image_dir = self.output_dir / 'database' / 'images'
             self.image_dir.mkdir(parents=True, exist_ok=True)
 
         # 识别格式
@@ -401,12 +564,271 @@ class WeChatToMarkdown:
             ext = '.webp'
 
         self.image_count += 1
-        filename = f"{self.article_prefix}_img_{self.image_count:03d}{ext}" if self.article_prefix else f"img_{self.image_count:03d}{ext}"
+        # 如果有 file_prefix，使用 file_prefix 作为文件名前缀
+        if self.file_prefix:
+            filename = f"{self.file_prefix}_img_{self.image_count:03d}{ext}"
+        else:
+            filename = f"{self.article_prefix}_img_{self.image_count:03d}{ext}" if self.article_prefix else f"img_{self.image_count:03d}{ext}"
         save_path = self.image_dir / filename
 
         if self._download_image(url, save_path):
             return f"images/{filename}"
         return url
+
+    def _svg_to_latex(self, svg) -> Optional[str]:
+        """
+        从微信 SVG 数学公式中解析 LaTeX 代码
+
+        微信使用 MathJax 渲染公式，SVG 中的 data-mml-node 属性包含 MathML 结构信息
+        data-c 属性包含 Unicode 码点，可直接转换为字符
+        """
+
+
+        def get_char_from_data_c(data_c: str) -> str:
+            """完整版：保留所有映射，同时精准过滤绘图乱码"""
+            if not data_c:
+                return ''
+
+            # --- 第一阶段：精准查表（保留你现有的所有特殊映射） ---
+            if data_c in SPECIAL_CHAR_MAP:
+                return SPECIAL_CHAR_MAP[data_c]
+
+            if data_c in MATH_ALPHANUMERIC_MAP:
+                return MATH_ALPHANUMERIC_MAP[data_c]
+
+            if data_c in GREEK_BOLD_MAP:
+                return GREEK_BOLD_MAP[data_c]
+
+            if data_c in GREEK_BOLD_SMALL_MAP:
+                return GREEK_BOLD_SMALL_MAP[data_c]
+
+            # --- 第二阶段：兜底转换与乱码过滤 ---
+            try:
+                code_point = int(data_c, 16)
+
+                # 【关键修复】MathJax 的 PUA (私有区) 字符过滤
+                # 范围 U+E000 - U+F8FF 都是 MathJax 用来拼凑大括号、长箭头的“零件”
+                # 它们在普通字体里没有对应字符，强行转码就会变成乱码方块
+                if 0xE000 <= code_point <= 0xF8FF:
+                    return ''  # 丢弃绘图零件
+
+                return chr(code_point)
+            except (ValueError, OverflowError):
+                return ''
+
+        # MathML node 到 LaTeX 的映射
+        def parse_node(node, context='') -> str:
+            """递归解析 MathML 节点"""
+            if node.name == 'path':
+                # 字形路径，通过 data-c 属性识别字符
+                data_c = node.get('data-c', '')
+                return get_char_from_data_c(data_c)
+
+            if node.name == 'text':
+                # 文本节点（可能是中文注释如"选择遗忘"）
+                text = node.get_text()
+                return f'\\text{{{text}}}' if text else ''
+
+            if node.name != 'g':
+                # 非分组元素，直接获取子元素
+                return ''.join(parse_node(child, context) for child in node.children)
+
+            mml_node = node.get('data-mml-node', '')
+
+            if not mml_node:
+                # 没有 data-mml-node，继续解析子元素
+                return ''.join(parse_node(child, context) for child in node.children)
+
+            # 处理不同类型的 MathML 节点
+            children_text = ''.join(parse_node(child, mml_node) for child in node.children)
+
+            if mml_node == 'mi':  # 标识符
+                return children_text
+            elif mml_node == 'mn':  # 数字
+                return children_text
+            elif mml_node == 'mo':  # 运算符
+                # 某些运算符后需要加空格以避免与后续标识符粘连
+                if children_text in [r'\cdot', r'\odot', r'\circ', r'\times', r'\otimes']:
+                    return children_text + ' '
+                return children_text
+            elif mml_node == 'mtext':  # 文本
+                # 尝试从子元素中提取文本（微信 SVG 中文本在 <text> 标签内）
+                text_content = collect_text_from_svg(node)
+                if text_content:
+                    return f'\\text{{{text_content}}}'
+                return f'\\text{{{children_text}}}' if children_text else ''
+            elif mml_node == 'msub':  # 下标
+                parts = split_subscript_children(node)
+                if len(parts) >= 2:
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
+                    sub = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+                    return f'{base}_{{{sub}}}'
+                return children_text
+            elif mml_node == 'msubsup':  # 上下标
+                parts = split_subscript_children(node)
+                if len(parts) >= 3:
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
+                    sup = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+                    sub = ''.join(parse_node(c, mml_node) for c in parts[2].children) if parts[2].name == 'g' else parse_node(parts[2], mml_node)
+                    return f'{base}^{{{sup}}}_{{{sub}}}'
+                return children_text
+            elif mml_node == 'msup':  # 上标
+                parts = split_subscript_children(node)
+                if len(parts) >= 2:
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
+                    sup = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+                    return f'{base}^{{{sup}}}'
+                return children_text
+            elif mml_node == 'msqrt':  # 处理平方根节点
+
+                # 1. 递归获取所有子节点的内容
+
+                inner_parts = []
+
+                for child in node.children:
+
+                    part = parse_node(child, mml_node)
+
+                    # 2. 关键：过滤掉子节点中由路径映射出来的那个孤立的 \sqrt 符号
+
+                    # 因为我们要用 \sqrt{...} 包装整个容器
+
+                    if part != r'\sqrt':
+                        inner_parts.append(part)
+
+                content = "".join(inner_parts).strip()
+
+                # 3. 返回正确的 LaTeX 格式
+
+                return f'\\sqrt{{{content}}}'
+            elif mml_node == 'mroot':  # 顺便修复 n 次根式（如 3次根号）
+
+                parts = split_subscript_children(node)
+
+                if len(parts) >= 2:
+                    # 第一个部分是内容，第二个部分是根指数
+
+                    base_raw = "".join(
+                        parse_node(c, mml_node) for c in (parts[0].children if parts[0].name == 'g' else [parts[0]]))
+
+                    index = "".join(
+                        parse_node(c, mml_node) for c in (parts[1].children if parts[1].name == 'g' else [parts[1]]))
+
+                    base = base_raw.replace(r'\sqrt', '').strip()
+
+                    return f'\\sqrt[{index}]{{{base}}}'
+
+                return children_text
+
+            elif mml_node == 'munder':
+                parts = split_subscript_children(node)
+                if len(parts) >= 2:
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
+                    under = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+
+                    # 如果 under 包含中文，通常是 \underbrace 结构
+                    if any('\u4e00' <= char <= '\u9fff' for char in under):
+                        # 清理 under 中可能残余的特殊空白或转义
+                        clean_under = under.replace('\\text{', '').replace('}', '').strip()
+                        return f'\\underbrace{{{base}}}_{{\\text{{{clean_under}}}}}'
+                    return f'{{{base}}}_{{{under}}}'
+
+            elif mml_node == 'mover':  # 上标注释
+                parts = split_subscript_children(node)
+                if len(parts) >= 2:
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
+                    over = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+                    return f'\\overline{{{base}}}' if over == '-' else f'{{{base}}}^{{{over}}}'
+                return children_text
+            elif mml_node == 'munderover':  # 上下标注释（如求和符号）
+                parts = split_subscript_children(node)
+                if len(parts) >= 3:
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
+                    under = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+                    over = ''.join(parse_node(c, mml_node) for c in parts[2].children) if parts[2].name == 'g' else parse_node(parts[2], mml_node)
+                    return f'{{{base}}}_{{{under}}}^{{{over}}}'
+                return children_text
+            elif mml_node == 'mfrac':  # 分数
+                parts = split_subscript_children(node)
+                if len(parts) >= 2:
+                    num = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
+                    den = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+                    return f'\\frac{{{num}}}{{{den}}}'
+                return children_text
+            elif mml_node == 'mtable':  # 矩阵/表格 (方程组)
+                rows = []
+                for row in node.find_all('g', attrs={'data-mml-node': 'mtr'}, recursive=False):
+                    cells = []
+                    for cell in row.find_all('g', attrs={'data-mml-node': 'mtd'}, recursive=False):
+                        cell_text = ''.join(parse_node(c, 'mtd') for c in cell.children)
+                        cells.append(cell_text)
+                    rows.append(' & '.join(cells))
+                if rows:
+                    return '\\begin{cases}\n' + ' \\\\\n'.join(rows) + '\n\\end{cases}'
+                return children_text
+            elif mml_node == 'mtr':  # 表格行
+                return children_text
+            elif mml_node == 'mtd':  # 表格单元格
+                return children_text
+            elif mml_node == 'menclose':  # 包围框（可能是矩阵外框）
+                inner = ''.join(parse_node(c, mml_node) for c in node.children)
+                return inner
+            elif mml_node == 'math':  # 数学根节点
+                return children_text
+            elif mml_node == 'mstyle':  # 样式
+                return children_text
+            elif mml_node == 'TeXAtom':
+                return children_text
+            else:
+                return children_text
+
+        def split_subscript_children(node):
+            """分离下标/上标的子元素，跳过装饰性 SVG 元素"""
+            parts = []
+            current_part = []
+            for child in node.children:
+                # 跳过纯装饰性的 svg 元素（大括号等）
+                if child.name == 'svg':
+                    continue
+                # 跳过空文本节点
+                if isinstance(child, str) and not child.strip():
+                    continue
+                if child.name == 'g' and child.get('data-mml-node'):
+                    if current_part:
+                        parts.append(current_part)
+                    parts.append(child)
+                    current_part = []
+                else:
+                    current_part.append(child)
+            if current_part:
+                parts.append(current_part)
+            return parts
+
+        # def collect_text_from_svg(node) -> str:
+        #     """从 SVG 的 text/tspan 元素中提取文本内容"""
+        #     texts = []
+        #     for t in node.find_all(['text', 'tspan']):
+        #         txt = t.get_text()
+        #         if txt:
+        #             texts.append(txt)
+        #     return ''.join(texts)
+        def collect_text_from_svg(node) -> str:
+            """修复版：仅提取叶子节点的文本，避免重复"""
+            # 直接获取该节点下所有的字符串，不再通过 find_all 遍历标签
+            # stripped=True 可以去掉多余空格，并合并子节点的文本
+            return node.get_text(strip=True)
+
+        try:
+            # 找到 math 根节点
+            math_node = svg.find('g', attrs={'data-mml-node': 'math'})
+            if not math_node:
+                return None
+
+            latex = parse_node(math_node)
+            return latex.strip() if latex else None
+        except Exception as e:
+            print(f"[Warning] Failed to parse LaTeX from SVG: {e}")
+            return None
 
     def _process_svg_formulas(self, soup):
         """
@@ -420,7 +842,12 @@ class WeChatToMarkdown:
         """
         # 确保 image_dir 存在
         if not self.image_dir:
-            self.image_dir = self.output_dir / 'database' / 'images'
+            # 如果有 file_prefix，使用 output_dir/images 目录（与 markdown 同级的 images 目录）
+            # 否则使用 output_dir/database/images 目录
+            if self.file_prefix:
+                self.image_dir = self.output_dir / 'images'
+            else:
+                self.image_dir = self.output_dir / 'database' / 'images'
             self.image_dir.mkdir(parents=True, exist_ok=True)
 
         # 查找所有包含数学内容的 SVG
@@ -454,10 +881,33 @@ class WeChatToMarkdown:
                 if text.strip() == '' or text == '\xa0' or text == '&nbsp;' or text == ' ':
                     nbsp_span = prev_sibling
 
-            # 将 SVG 转换为 PNG 图片
+            # 优先尝试从 SVG 解析 LaTeX 公式
+            latex = self._svg_to_latex(svg)
+            if latex:
+                # 判断是块级公式还是行内公式
+                # 检查是否包含 mtable (矩阵/方程组) 或 menclose (带框公式)
+                has_block = svg.find(attrs={'data-mml-node': ['mtable', 'menclose']})
+                if has_block:
+                    replacement = f'\n\n$$\n{latex}\n$$\n\n'
+                else:
+                    replacement = f' ${latex}$ '
+
+                # 移除占位 span
+                if nbsp_span:
+                    nbsp_span.decompose()
+
+                # 替换整个父 span (包含 SVG 的那个)
+                parent_span.replace_with(replacement)
+                continue
+
+            # 解析失败，回退到 PNG 图片
             svg_content = str(svg)
             self.formula_count += 1
-            filename = f"{self.article_prefix}_formula_{self.formula_count:03d}.png" if self.article_prefix else f"formula_{self.formula_count:03d}.png"
+            # 如果有 file_prefix，使用 file_prefix 作为文件名前缀
+            if self.file_prefix:
+                filename = f"{self.file_prefix}_formula_{self.formula_count:03d}.png"
+            else:
+                filename = f"{self.article_prefix}_formula_{self.formula_count:03d}.png" if self.article_prefix else f"formula_{self.formula_count:03d}.png"
             save_path = self.image_dir / filename
 
             if self._svg_to_png(svg_content, save_path):
@@ -574,7 +1024,7 @@ class WeChatToMarkdown:
         # 表格
         elif tag == 'table':
             rows = []
-            for tr in table.find_all('tr'):
+            for tr in node.find_all('tr'):
                 cells = [cell.get_text().strip() for cell in tr.find_all(['th', 'td'])]
                 if cells: rows.append(cells)
             if not rows: return ''
@@ -653,8 +1103,13 @@ class WeChatToMarkdown:
         full_md = f"---\ntitle: {title}\nsource: {article_url}\ndate: {time.strftime('%Y-%m-%d')}\n---\n\n{markdown_body}"
 
         # 保存
-        output_path = self.output_dir / 'database' / f"{self.article_prefix}.md"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # 如果有 file_prefix，直接保存到 output_dir 根目录，文件名为 {file_prefix}.md
+        # 否则保存到 output_dir/database/ 目录
+        if self.file_prefix:
+            output_path = self.output_dir / f"{self.file_prefix}.md"
+        else:
+            output_path = self.output_dir / 'database' / f"{self.article_prefix}.md"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(full_md)

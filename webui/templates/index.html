@@ -1473,8 +1473,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         url,
-                        title,
-                        author,
+                        title: title || '',
+                        author: author || '',
                         auto_convert: autoConvert
                     })
                 });
@@ -1637,8 +1637,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         url,
-                        title,
-                        author,
+                        title: title || '',
+                        author: author || '',
                         auto_convert: autoConvert
                     })
                 });
