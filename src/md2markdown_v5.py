@@ -221,8 +221,10 @@ class MarkdownToKFX:
             has_chinese = bool(re.search(r'[\u4e00-\u9fff]', code))
             # Windows 上优先使用支持中文的字体
             if has_chinese:
-                # 尝试使用支持中文的等宽字体
-                font_name = 'Microsoft YaHei Mono'  # 微软雅黑等宽
+                # 尝试使用支持中文的等宽字体（按优先级排列）
+                # 注意：Microsoft YaHei Mono 不是标准字体，使用 Microsoft YaHei 或其他中文字体
+                font_name = 'C:/Windows/Fonts/simhei.ttf'  # 微软雅黑（非等宽，但支持中文）
+
             else:
                 font_name = 'Consolas'
 

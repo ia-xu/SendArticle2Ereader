@@ -635,46 +635,99 @@ class WeChatToMarkdown:
         data-c 属性包含 Unicode 码点，可直接转换为字符
         """
 
+        # 补充一些常用的符号映射
+        EXTENDED_MAP = {
+            '2217': r'\cdot',  # 星号转点乘
+            '2212': '-',  # 减号
+            '3F5': r'\epsilon',  # 希腊字母小 epsilon
+            '2211': r'\sum',
+        }
 
         def get_char_from_data_c(data_c: str) -> str:
-            """完整版：保留所有映射，同时精准过滤绘图乱码"""
-            if not data_c:
-                return ''
-
-            # --- 第一阶段：精准查表（保留你现有的所有特殊映射） ---
-            if data_c in SPECIAL_CHAR_MAP:
-                return SPECIAL_CHAR_MAP[data_c]
-
-            if data_c in MATH_ALPHANUMERIC_MAP:
-                return MATH_ALPHANUMERIC_MAP[data_c]
-
-            if data_c in GREEK_BOLD_MAP:
-                return GREEK_BOLD_MAP[data_c]
-
-            if data_c in GREEK_BOLD_SMALL_MAP:
-                return GREEK_BOLD_SMALL_MAP[data_c]
-
-            # --- 第二阶段：兜底转换与乱码过滤 ---
+            if data_c in EXTENDED_MAP: return EXTENDED_MAP[data_c]
+            if data_c in SPECIAL_CHAR_MAP: return SPECIAL_CHAR_MAP[data_c]
+            if data_c in MATH_ALPHANUMERIC_MAP: return MATH_ALPHANUMERIC_MAP[data_c]
             try:
                 code_point = int(data_c, 16)
-
-                # 【关键修复】MathJax 的 PUA (私有区) 字符过滤
-                # 范围 U+E000 - U+F8FF 都是 MathJax 用来拼凑大括号、长箭头的“零件”
-                # 它们在普通字体里没有对应字符，强行转码就会变成乱码方块
-                if 0xE000 <= code_point <= 0xF8FF:
-                    return ''  # 丢弃绘图零件
-
+                if 0xE000 <= code_point <= 0xF8FF: return ''
                 return chr(code_point)
-            except (ValueError, OverflowError):
+            except:
                 return ''
+        # def get_char_from_data_c(data_c: str) -> str:
+        #     """完整版：保留所有映射，同时精准过滤绘图乱码，并修复粘连问题"""
+        #     if not data_c:
+        #         return ''
+        #
+        #     res = None
+        #     # --- 第一阶段：精准查表 ---
+        #     if data_c in SPECIAL_CHAR_MAP:
+        #         res = SPECIAL_CHAR_MAP[data_c]
+        #     elif data_c in MATH_ALPHANUMERIC_MAP:
+        #         res = MATH_ALPHANUMERIC_MAP[data_c]
+        #     elif data_c in GREEK_BOLD_MAP:
+        #         res = GREEK_BOLD_MAP[data_c]
+        #     elif data_c in GREEK_BOLD_SMALL_MAP:
+        #         res = GREEK_BOLD_SMALL_MAP[data_c]
+        #
+        #     if res is not None:
+        #         # 【关键修复】如果结果是 \开头的命令且以字母结尾，加一个空格防止粘连
+        #         # 例如 \gamma -> \gamma
+        #         if res.startswith('\\') and res[-1].isalpha():
+        #             return res + ' '
+        #         return res
+        #
+        #     # --- 第二阶段：兜底转换与乱码过滤 ---
+        #     try:
+        #         code_point = int(data_c, 16)
+        #         if 0xE000 <= code_point <= 0xF8FF:
+        #             return ''
+        #         return chr(code_point)
+        #     except (ValueError, OverflowError):
+        #         return ''
+        # def get_char_from_data_c(data_c: str) -> str:
+        #     """完整版：保留所有映射，同时精准过滤绘图乱码"""
+        #     if not data_c:
+        #         return ''
+        #
+        #     # --- 第一阶段：精准查表（保留你现有的所有特殊映射） ---
+        #     if data_c in SPECIAL_CHAR_MAP:
+        #         return SPECIAL_CHAR_MAP[data_c]
+        #
+        #     if data_c in MATH_ALPHANUMERIC_MAP:
+        #         return MATH_ALPHANUMERIC_MAP[data_c]
+        #
+        #     if data_c in GREEK_BOLD_MAP:
+        #         return GREEK_BOLD_MAP[data_c]
+        #
+        #     if data_c in GREEK_BOLD_SMALL_MAP:
+        #         return GREEK_BOLD_SMALL_MAP[data_c]
+        #
+        #
+        #     # --- 第二阶段：兜底转换与乱码过滤 ---
+        #     try:
+        #         code_point = int(data_c, 16)
+        #
+        #         # 【关键修复】MathJax 的 PUA (私有区) 字符过滤
+        #         # 范围 U+E000 - U+F8FF 都是 MathJax 用来拼凑大括号、长箭头的“零件”
+        #         # 它们在普通字体里没有对应字符，强行转码就会变成乱码方块
+        #         if 0xE000 <= code_point <= 0xF8FF:
+        #             return ''  # 丢弃绘图零件
+        #
+        #         return chr(code_point)
+        #     except (ValueError, OverflowError):
+        #         return ''
 
         # MathML node 到 LaTeX 的映射
+
         def parse_node(node, context='') -> str:
             """递归解析 MathML 节点"""
             if node.name == 'path':
                 # 字形路径，通过 data-c 属性识别字符
                 data_c = node.get('data-c', '')
                 return get_char_from_data_c(data_c)
+
+            if node.name == 'rect':  # 过滤掉根号的长横线、分数的横线等绘图零件
+                return ''
 
             if node.name == 'text':
                 # 文本节点（可能是中文注释如"选择遗忘"）
@@ -699,10 +752,13 @@ class WeChatToMarkdown:
             elif mml_node == 'mn':  # 数字
                 return children_text
             elif mml_node == 'mo':  # 运算符
-                # 某些运算符后需要加空格以避免与后续标识符粘连
-                if children_text in [r'\cdot', r'\odot', r'\circ', r'\times', r'\otimes']:
-                    return children_text + ' '
+                # 只要是以 \ 开头且以字母结尾的 LaTeX 命令，都建议加空格
+                if children_text.startswith('\\') and children_text[-1].isalpha():
+                    # 如果末尾还没有空格，则补一个
+                    if not children_text.endswith(' '):
+                        return children_text + ' '
                 return children_text
+
             elif mml_node == 'mtext':  # 文本
                 # 尝试从子元素中提取文本（微信 SVG 中文本在 <text> 标签内）
                 text_content = collect_text_from_svg(node)
@@ -739,28 +795,19 @@ class WeChatToMarkdown:
                     sup = ''.join(parse_node(c, mml_node) for c in parts[sup_idx].children) if parts[sup_idx].name == 'g' else parse_node(parts[sup_idx], mml_node)
                     return f'{base}^{{{sup}}}'
                 return children_text
-            elif mml_node == 'msqrt':  # 处理平方根节点
-
-                # 1. 递归获取所有子节点的内容
-
-                inner_parts = []
-
+            if mml_node == 'msqrt':
+                # MathJax 的 msqrt 内部通常有 3 个主要部分：
+                # 1. 包含被开方内容的 <g> (data-mml-node 通常是具体的 mi/mn/mrow)
+                # 2. 根号符号 <g data-mml-node="mo">
+                # 3. 顶部的横线 <rect>
+                inner_content = ""
                 for child in node.children:
-
-                    part = parse_node(child, mml_node)
-
-                    # 2. 关键：过滤掉子节点中由路径映射出来的那个孤立的 \sqrt 符号
-
-                    # 因为我们要用 \sqrt{...} 包装整个容器
-
-                    if part != r'\sqrt':
-                        inner_parts.append(part)
-
-                content = "".join(inner_parts).strip()
-
-                # 3. 返回正确的 LaTeX 格式
-
-                return f'\\sqrt{{{content}}}'
+                    # 排除掉作为符号零件的 mo (根号钩子) 和 rect (横线)
+                    if child.name == 'g' and child.get('data-mml-node') != 'mo':
+                        inner_content += parse_node(child, 'msqrt')
+                    elif child.name == 'g' and child.get('data-mml-node') == 'mo':
+                        continue  # 跳过钩子
+                return f'\\sqrt{{{inner_content.strip()}}}'
             elif mml_node == 'mroot':  # 顺便修复 n 次根式（如 3次根号）
 
                 parts = split_subscript_children(node)
@@ -827,17 +874,21 @@ class WeChatToMarkdown:
                     den = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
                     return f'\\frac{{{num}}}{{{den}}}'
                 return children_text
-            elif mml_node == 'mtable':  # 矩阵/表格 (方程组)
+            elif mml_node == 'mtable':
                 rows = []
-                for row in node.find_all('g', attrs={'data-mml-node': 'mtr'}, recursive=False):
+                # 找到所有的行 (mtr)
+                for mtr in node.find_all('g', attrs={'data-mml-node': 'mtr'}, recursive=False):
                     cells = []
-                    for cell in row.find_all('g', attrs={'data-mml-node': 'mtd'}, recursive=False):
-                        cell_text = ''.join(parse_node(c, 'mtd') for c in cell.children)
-                        cells.append(cell_text)
+                    # 找到行内所有的单元格 (mtd)
+                    for mtd in mtr.find_all('g', attrs={'data-mml-node': 'mtd'}, recursive=False):
+                        cells.append(parse_node(mtd, 'mtd').strip())
                     rows.append(' & '.join(cells))
-                if rows:
-                    return '\\begin{cases}\n' + ' \\\\\n'.join(rows) + '\n\\end{cases}'
-                return children_text
+
+                # 如果是单列多行且带有 cases 逻辑，可以保留 cases；
+                # 但如果是多列公式对齐，aligned 环境更通用
+                if len(rows) > 1:
+                    return '\\begin{aligned}\n' + ' \\\\\n'.join(rows) + '\n\\end{aligned}'
+                return ' \\\\\n'.join(rows)
             elif mml_node == 'mtr':  # 表格行
                 return children_text
             elif mml_node == 'mtd':  # 表格单元格
@@ -1067,9 +1118,13 @@ class WeChatToMarkdown:
         # 3. 处理代码块 (优化版)
         for pre in soup.find_all(['pre', 'section']):
             # 微信代码块特征：通常带有 code-snippet__js 等 class
+            # 或者是 mdnice编辑器 格式 (data-tool="mdnice编辑器")
             is_code = 'code-snippet' in str(pre.get('class', '')) or pre.name == 'pre'
             if not is_code:
                 continue
+
+            # 检测是否为 mdnice编辑器 格式
+            is_mdnice = pre.get('data-tool') == 'mdnice编辑器'
 
             # 尝试定位真正的代码容器
             code_tag = pre.find('code')
@@ -1078,21 +1133,54 @@ class WeChatToMarkdown:
             # 如果直接 get_text() 会丢失换行。我们需要手动遍历子节点并换行。
             lines = []
 
-            # 寻找行容器（微信常用 code-snippet__line-content）
-            line_containers = pre.find_all(class_=re.compile(r'line-content|code-snippet__line'))
+            if is_mdnice:
+                # mdnice编辑器 格式：代码在 <span leaf=""> 中，<br> 表示换行
+                # 需要递归遍历所有节点，提取文本并保留换行
+                def extract_mdnice_text(node):
+                    """递归提取 mdnice 格式的代码文本"""
+                    if isinstance(node, str):
+                        return node
+                    if node.name is None:
+                        return node.get_text()
+                    if node.name == 'br':
+                        return '\n'
+                    # 检查是否有 leaf 属性（span leaf=""）
+                    # 对于有 leaf 属性的 span，需要检查子节点
+                    if node.name == 'span':
+                        # 先收集所有子节点的内容
+                        parts = []
+                        for child in node.children:
+                            text = extract_mdnice_text(child)
+                            if text:
+                                parts.append(text)
+                        return ''.join(parts)
+                    # 其他标签递归处理
+                    parts = []
+                    for child in node.children:
+                        text = extract_mdnice_text(child)
+                        if text:
+                            parts.append(text)
+                    return ''.join(parts)
 
-            if line_containers:
-                for line in line_containers:
-                    lines.append(line.get_text())
+                code_text = extract_mdnice_text(code_tag) if code_tag else extract_mdnice_text(pre)
+                lines = code_text.split('\n')
             else:
-                # 备选方案：如果没找到行容器，尝试处理普通的换行
-                raw_text = code_tag.get_text('\n') if code_tag else pre.get_text('\n')
-                lines = raw_text.split('\n')
+                # 寻找行容器（微信常用 code-snippet__line-content）
+                line_containers = pre.find_all(class_=re.compile(r'line-content|code-snippet__line'))
+
+                if line_containers:
+                    for line in line_containers:
+                        lines.append(line.get_text())
+                else:
+                    # 备选方案：如果没找到行容器，尝试处理普通的换行
+                    raw_text = code_tag.get_text('\n') if code_tag else pre.get_text('\n')
+                    lines = raw_text.split('\n')
 
             # 过滤掉纯数字的行号（微信有些代码块行号在 text 里）
+            # 同时清理零宽空格和不间断空格
             clean_lines = []
             for l in lines:
-                content = l.replace('\u200b', '').strip('\r')
+                content = l.replace('\u200b', '').replace('\xa0', ' ').strip('\r')
                 clean_lines.append(content)
 
             code_text = '\n'.join(clean_lines)

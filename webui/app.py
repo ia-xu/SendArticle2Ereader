@@ -8,11 +8,13 @@ import shutil
 import uuid
 import hashlib
 import zipfile
+import threading
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for
 from werkzeug.utils import secure_filename
 from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor
 
 
 # 添加 src 目录到路径
@@ -38,6 +40,80 @@ except ImportError as e:
     WECHAT_AVAILABLE = False
 
 app = Flask(__name__)
+
+# 后台任务管理器
+class TaskManager:
+    """后台任务管理器，用于管理异步下载和转换任务"""
+
+    def __init__(self):
+        self.tasks = {}  # task_id -> task_info
+        self.lock = threading.Lock()
+        self.executor = ThreadPoolExecutor(max_workers=3)  # 最多3个并发任务
+
+    def create_task(self, task_type, params):
+        """创建新任务"""
+        task_id = str(uuid.uuid4())[:8]
+        with self.lock:
+            self.tasks[task_id] = {
+                'id': task_id,
+                'type': task_type,
+                'status': 'pending',
+                'progress': 0,
+                'message': '等待执行',
+                'result': None,
+                'error': None,
+                'created_at': datetime.now().isoformat(),
+                'finished_at': None
+            }
+        return task_id
+
+    def update_task(self, task_id, **kwargs):
+        """更新任务状态"""
+        with self.lock:
+            if task_id in self.tasks:
+                self.tasks[task_id].update(kwargs)
+                if kwargs.get('status') in ['completed', 'failed']:
+                    self.tasks[task_id]['finished_at'] = datetime.now().isoformat()
+
+    def get_task(self, task_id):
+        """获取任务信息"""
+        with self.lock:
+            if task_id in self.tasks:
+                return self.tasks[task_id].copy()
+            return None
+
+    def get_all_tasks(self):
+        """获取所有任务"""
+        with self.lock:
+            return {k: v.copy() for k, v in self.tasks.items()}
+
+    def submit_task(self, task_id, func, *args, **kwargs):
+        """提交任务到线程池执行"""
+        def wrapper():
+            try:
+                self.update_task(task_id, status='running', message='执行中', progress=10)
+                result = func(task_id, *args, **kwargs)
+                self.update_task(task_id, status='completed', progress=100, result=result)
+            except Exception as e:
+                self.update_task(task_id, status='failed', error=str(e))
+
+        self.executor.submit(wrapper)
+
+    def cleanup_old_tasks(self, max_age_hours=24):
+        """清理旧任务"""
+        cutoff = datetime.now().timestamp() - max_age_hours * 3600
+        with self.lock:
+            to_delete = []
+            for task_id, task in self.tasks.items():
+                if task.get('finished_at'):
+                    finished = datetime.fromisoformat(task['finished_at']).timestamp()
+                    if finished < cutoff:
+                        to_delete.append(task_id)
+            for task_id in to_delete:
+                del self.tasks[task_id]
+
+# 全局任务管理器
+task_manager = TaskManager()
 
 # 配置
 BASE_DIR = Path(__file__).parent.parent
@@ -494,22 +570,49 @@ def batch_delete():
 
 @app.route('/batch_convert', methods=['POST'])
 def batch_convert():
-    """批量转换"""
+    """批量转换（后台异步）"""
     file_ids = request.json.get('ids', [])
+
+    if not file_ids:
+        return jsonify({'error': 'No files selected'}), 400
+
+    # 创建后台任务
+    task_id = task_manager.create_task('batch_convert', {
+        'file_ids': file_ids,
+        'total': len(file_ids)
+    })
+
+    # 提交任务到线程池
+    task_manager.submit_task(task_id, _do_batch_convert, file_ids)
+
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'message': f'已创建转换任务，共 {len(file_ids)} 个文件'
+    })
+
+
+def _do_batch_convert(task_id, file_ids):
+    """执行批量转换（后台任务）"""
     results = []
+    total = len(file_ids)
 
-    for file_id in file_ids:
-        info = get_file_info(file_id)
-        if not info:
-            results.append({'id': file_id, 'status': 'error', 'message': 'Not found'})
-            continue
-
-        md_path = UPLOAD_FOLDER / f"{file_id}.md"
-        if not md_path.exists():
-            results.append({'id': file_id, 'status': 'error', 'message': 'Source missing'})
-            continue
-
+    for i, file_id in enumerate(file_ids):
         try:
+            progress = int((i / total) * 90) + 5
+            task_manager.update_task(task_id, progress=progress,
+                                     message=f'正在转换 {i+1}/{total}...')
+
+            info = get_file_info(file_id)
+            if not info:
+                results.append({'id': file_id, 'status': 'error', 'message': 'Not found'})
+                continue
+
+            md_path = UPLOAD_FOLDER / f"{file_id}.md"
+            if not md_path.exists():
+                results.append({'id': file_id, 'status': 'error', 'message': 'Source missing'})
+                continue
+
             output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
             converter = MarkdownToKFX(
                 markdown_file=str(md_path),
@@ -535,7 +638,11 @@ def batch_convert():
         except Exception as e:
             results.append({'id': file_id, 'status': 'error', 'message': str(e)})
 
-    return jsonify({'success': True, 'results': results})
+    success_count = sum(1 for r in results if r['status'] == 'success')
+    task_manager.update_task(task_id, progress=100, message='转换完成',
+                             result={'results': results, 'total': total, 'success_count': success_count})
+
+    return {'results': results, 'total': total, 'success_count': success_count}
 
 @app.route('/batch_push_kindle', methods=['POST'])
 def batch_push_kindle():
@@ -788,24 +895,46 @@ def zhihu_preview():
 
 @app.route('/zhihu/download', methods=['POST'])
 def zhihu_download():
-    """下载知乎文章并添加到文件列表"""
+    """下载知乎文章并添加到文件列表（后台异步）"""
     if not ZHIHU_AVAILABLE:
         return jsonify({'error': 'Zhihu downloader not available'}), 400
 
     url = request.json.get('url', '').strip()
     custom_title = request.json.get('title') or ''
     custom_author = request.json.get('author') or ''
-    auto_convert = request.json.get('auto_convert', False)
 
     if not url:
         return jsonify({'error': 'URL 不能为空'}), 400
 
+    # 创建后台任务
+    task_id = task_manager.create_task('zhihu_download', {
+        'url': url,
+        'title': custom_title,
+        'author': custom_author
+    })
+
+    # 提交任务到线程池
+    task_manager.submit_task(task_id, _do_zhihu_download, url, custom_title, custom_author)
+
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'message': '任务已创建，正在后台执行'
+    })
+
+
+def _do_zhihu_download(task_id, url, custom_title, custom_author):
+    """执行知乎文章下载（后台任务）- 下载并转换"""
     try:
+        task_manager.update_task(task_id, progress=5, message='正在加载 Cookie...')
+
         # 加载 cookies
         cookies = None
         if ZHIHU_COOKIE_FILE.exists():
             auth = ZhihuAuth(cookie_file=str(ZHIHU_COOKIE_FILE))
             cookies = auth.load_cookies()
+
+        task_manager.update_task(task_id, progress=10, message='正在下载文章...')
 
         # 创建转换器
         converter = ZhihuToMarkdown(
@@ -816,28 +945,24 @@ def zhihu_download():
         # 尝试转换文章
         result = converter.convert(url, use_browser=False)
 
-        # 如果 API 模式失败（可能需要登录），尝试浏览器模式
+        # 如果 API 模式失败，尝试浏览器模式
         if not result:
-            # 检查是否是登录问题
             if not cookies:
-                return jsonify({
-                    'error': '请先登录知乎账号',
-                    'need_login': True
-                }), 401
-
-            # 尝试使用浏览器模式
-            print("[Info] API mode failed, trying browser mode...")
+                raise Exception('请先登录知乎账号')
+            task_manager.update_task(task_id, progress=15, message='尝试浏览器模式...')
             result = converter.convert(url, use_browser=True)
 
         if not result:
-            return jsonify({'error': '下载失败，可能是登录已过期或文章不存在'}), 500
+            raise Exception('下载失败，可能是登录已过期或文章不存在')
 
         markdown_content, output_file = result
 
         # 读取下载的文件
         downloaded_path = Path(output_file)
         if not downloaded_path.exists():
-            return jsonify({'error': '文件保存失败'}), 500
+            raise Exception('文件保存失败')
+
+        task_manager.update_task(task_id, progress=40, message='正在保存文件...')
 
         # 生成文件 ID
         file_id = str(uuid.uuid4())[:8]
@@ -862,57 +987,51 @@ def zhihu_download():
         }
         update_file_info(file_id, file_info)
 
-        response_data = {
-            'success': True,
+        # 执行转换
+        task_manager.update_task(task_id, progress=60, message='正在转换为 KFX...')
+        try:
+            output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+            kfx_converter = MarkdownToKFX(
+                markdown_file=str(md_path),
+                output_file=str(output_path),
+                title=title,
+                author=author
+            )
+            convert_result = kfx_converter.convert()
+
+            status = 'converted'
+            if convert_result.suffix == '.epub':
+                epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
+                if convert_result != epub_path:
+                    shutil.move(str(convert_result), str(epub_path))
+                status = 'converted_epub'
+
+            file_info['status'] = status
+            file_info['convert_time'] = datetime.now().isoformat()
+            update_file_info(file_id, file_info)
+
+        except Exception as e:
+            task_manager.update_task(task_id, progress=100, message=f'下载完成，转换失败: {str(e)}', result={
+                'file_id': file_id,
+                'name': title,
+                'author': author,
+                'convert_error': str(e)
+            })
+            return {'file_id': file_id, 'name': title, 'author': author, 'convert_error': str(e)}
+
+        task_manager.update_task(task_id, progress=100, message='下载并转换完成', result={
             'file_id': file_id,
             'name': title,
             'author': author,
-            'message': '下载成功'
-        }
+            'status': status
+        })
 
-        # 如果需要自动转换
-        if auto_convert:
-            try:
-                output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
-                kfx_converter = MarkdownToKFX(
-                    markdown_file=str(md_path),
-                    output_file=str(output_path),
-                    title=title,
-                    author=author
-                )
-                convert_result = kfx_converter.convert()
-
-                status = 'converted'
-                if convert_result.suffix == '.epub':
-                    epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
-                    if convert_result != epub_path:
-                        shutil.move(str(convert_result), str(epub_path))
-                    status = 'converted_epub'
-
-                file_info['status'] = status
-                file_info['convert_time'] = datetime.now().isoformat()
-                update_file_info(file_id, file_info)
-
-                response_data['status'] = status
-                response_data['message'] = '下载并转换成功'
-            except Exception as e:
-                response_data['convert_error'] = str(e)
-                response_data['message'] = f'下载成功，但转换失败: {str(e)}'
-
-        return jsonify(response_data)
+        return {'file_id': file_id, 'name': title, 'author': author, 'status': status}
 
     except Exception as e:
         error_msg = str(e)
-        # 检查是否是登录相关的错误
-        if '401' in error_msg or 'unauthorized' in error_msg.lower():
-            return jsonify({
-                'error': '登录已过期，请重新登录知乎账号',
-                'need_login': True
-            }), 401
-        return jsonify({'error': f'下载失败: {error_msg}'}), 500
-
-
-        return jsonify({'error': f'下载失败：{error_msg}'}), 500
+        task_manager.update_task(task_id, status='failed', error=error_msg)
+        raise
 
 
 # ==================== 微信下载 API ====================
@@ -1055,30 +1174,51 @@ def wechat_preview():
 
 @app.route('/wechat/download', methods=['POST'])
 def wechat_download():
-    """下载微信文章并添加到文件列表"""
+    """下载微信文章并添加到文件列表（后台异步）"""
     if not WECHAT_AVAILABLE:
         return jsonify({'error': 'WeChat downloader not available'}), 400
 
     url = request.json.get('url', '').strip()
     custom_title = request.json.get('title') or ''
     custom_author = request.json.get('author') or ''
-    auto_convert = request.json.get('auto_convert', False)
 
     if not url:
         return jsonify({'error': 'URL 不能为空'}), 400
 
+    # 创建后台任务
+    task_id = task_manager.create_task('wechat_download', {
+        'url': url,
+        'title': custom_title,
+        'author': custom_author
+    })
+
+    # 提交任务到线程池
+    task_manager.submit_task(task_id, _do_wechat_download, url, custom_title, custom_author)
+
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'message': '任务已创建，正在后台执行'
+    })
+
+
+def _do_wechat_download(task_id, url, custom_title, custom_author):
+    """执行微信文章下载（后台任务）- 下载并转换"""
     try:
+        task_manager.update_task(task_id, progress=5, message='正在加载 Cookie...')
+
         # 加载 cookies
         cookies = None
         if WECHAT_COOKIE_FILE.exists():
             auth = WeChatAuth(cookie_file=str(WECHAT_COOKIE_FILE))
             cookies = auth.load_cookies()
 
+        task_manager.update_task(task_id, progress=10, message='正在下载文章...')
+
         # 生成文件 ID（提前生成，用于建立独立的 images 目录）
         file_id = str(uuid.uuid4())[:8]
 
         # 创建转换器，直接输出到 uploads 目录
-        # 这样 markdown 和 images 会在同一目录下，确保相对路径正确
         converter = WeChatToMarkdown(
             output_dir=str(UPLOAD_FOLDER),
             cookies=cookies,
@@ -1089,14 +1229,16 @@ def wechat_download():
         result = converter.convert(url, use_browser=True)
 
         if not result:
-            return jsonify({'error': '下载失败，可能是登录已过期或文章不存在'}), 500
+            raise Exception('下载失败，可能是登录已过期或文章不存在')
 
         markdown_content, output_file = result
 
         # 读取下载的文件
         downloaded_path = Path(output_file)
         if not downloaded_path.exists():
-            return jsonify({'error': '文件保存失败'}), 500
+            raise Exception('文件保存失败')
+
+        task_manager.update_task(task_id, progress=40, message='正在保存文件...')
 
         # 从 markdown YAML front matter 中提取标题
         extracted_title = file_id  # 默认使用 file_id
@@ -1127,50 +1269,51 @@ def wechat_download():
         }
         update_file_info(file_id, file_info)
 
-        response_data = {
-            'success': True,
+        # 执行转换
+        task_manager.update_task(task_id, progress=60, message='正在转换为 KFX...')
+        try:
+            output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+            kfx_converter = MarkdownToKFX(
+                markdown_file=str(md_path),
+                output_file=str(output_path),
+                title=title,
+                author=author
+            )
+            convert_result = kfx_converter.convert()
+
+            status = 'converted'
+            if convert_result.suffix == '.epub':
+                epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
+                if convert_result != epub_path:
+                    shutil.move(str(convert_result), str(epub_path))
+                status = 'converted_epub'
+
+            file_info['status'] = status
+            file_info['convert_time'] = datetime.now().isoformat()
+            update_file_info(file_id, file_info)
+
+        except Exception as e:
+            task_manager.update_task(task_id, progress=100, message=f'下载完成，转换失败: {str(e)}', result={
+                'file_id': file_id,
+                'name': title,
+                'author': author,
+                'convert_error': str(e)
+            })
+            return {'file_id': file_id, 'name': title, 'author': author, 'convert_error': str(e)}
+
+        task_manager.update_task(task_id, progress=100, message='下载并转换完成', result={
             'file_id': file_id,
             'name': title,
             'author': author,
-            'message': '下载成功'
-        }
+            'status': status
+        })
 
-        # 如果需要自动转换
-        if auto_convert:
-            try:
-                output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
-                kfx_converter = MarkdownToKFX(
-                    markdown_file=str(md_path),
-                    output_file=str(output_path),
-                    title=title,
-                    author=author
-                )
-                convert_result = kfx_converter.convert()
-
-                status = 'converted'
-                if convert_result.suffix == '.epub':
-                    epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
-                    if convert_result != epub_path:
-                        shutil.move(str(convert_result), str(epub_path))
-                    status = 'converted_epub'
-
-                file_info['status'] = status
-                file_info['convert_time'] = datetime.now().isoformat()
-                update_file_info(file_id, file_info)
-
-                response_data['status'] = status
-                response_data['message'] = '下载并转换成功'
-            except Exception as e:
-                response_data['convert_error'] = str(e)
-                response_data['message'] = f'下载成功，但转换失败：{str(e)}'
-
-        return jsonify(response_data)
+        return {'file_id': file_id, 'name': title, 'author': author, 'status': status}
 
     except Exception as e:
         error_msg = str(e)
-        if 'playwright' in error_msg.lower():
-            return jsonify({'error': '需要安装 playwright: pip install playwright && playwright install chromium'}), 500
-        return jsonify({'error': f'下载失败：{error_msg}'}), 500
+        task_manager.update_task(task_id, status='failed', error=error_msg)
+        raise
 
 
 if __name__ == '__main__':
@@ -1183,3 +1326,20 @@ if __name__ == '__main__':
     print(f"Kindle path: {KINDLE_ARTICLE_PATH}")
     print("=" * 50)
     app.run(debug=True, host='0.0.0.0', port=5000)
+
+
+# ==================== 后台任务 API ====================
+
+@app.route('/task/status/<task_id>')
+def get_task_status(task_id):
+    """获取任务状态"""
+    task = task_manager.get_task(task_id)
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
+    return jsonify(task)
+
+
+@app.route('/task/list')
+def get_task_list():
+    """获取所有任务列表"""
+    return jsonify(task_manager.get_all_tasks())

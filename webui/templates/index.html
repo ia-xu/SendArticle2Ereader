@@ -534,10 +534,7 @@
                                placeholder="自定义作者 (可选)">
                     </div>
                     <div class="col-md-3">
-                        <div class="form-check mt-1">
-                            <input class="form-check-input" type="checkbox" id="zhihuAutoConvert" checked>
-                            <label class="form-check-label" for="zhihuAutoConvert">下载后自动转换</label>
-                        </div>
+                        <small class="text-muted">下载将在后台执行</small>
                     </div>
                     <div class="col-md-2">
                         <button class="btn btn-success btn-sm w-100" id="zhihuConfirmDownloadBtn">
@@ -600,10 +597,7 @@
                                placeholder="自定义作者 (可选)">
                     </div>
                     <div class="col-md-3">
-                        <div class="form-check mt-1">
-                            <input class="form-check-input" type="checkbox" id="wechatAutoConvert" checked>
-                            <label class="form-check-label" for="wechatAutoConvert">下载后自动转换</label>
-                        </div>
+                        <small class="text-muted">下载将在后台执行</small>
                     </div>
                     <div class="col-md-2">
                         <button class="btn btn-success btn-sm w-100" id="wechatConfirmDownloadBtn">
@@ -611,6 +605,22 @@
                         </button>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- 后台任务状态 -->
+        <div id="taskStatusPanel" class="alert alert-info" style="display: none;">
+            <div class="d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center">
+                    <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                    <span id="taskStatusText">后台任务执行中...</span>
+                </div>
+                <button class="btn btn-sm btn-outline-primary" onclick="location.reload()">
+                    <i class="bi bi-arrow-repeat"></i> 刷新状态
+                </button>
+            </div>
+            <div class="progress mt-2" style="height: 5px;">
+                <div id="taskProgressBar" class="progress-bar" role="progressbar" style="width: 0%"></div>
             </div>
         </div>
 
@@ -884,6 +894,15 @@
             document.getElementById('loadingOverlay').style.display = 'none';
         }
 
+        // ==================== 后台任务状态 ====================
+        function showTaskPanel(show = true) {
+            document.getElementById('taskStatusPanel').style.display = show ? 'block' : 'none';
+        }
+
+        function updateTaskPanel(message) {
+            document.getElementById('taskStatusText').textContent = message;
+        }
+
         // 上传相关
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
@@ -1144,8 +1163,8 @@
             const checked = document.querySelectorAll('.file-checkbox:checked');
             if (checked.length === 0) return;
 
-            showLoading();
             const ids = Array.from(checked).map(cb => cb.dataset.id);
+
             try {
                 const res = await fetch('/batch_convert', {
                     method: 'POST',
@@ -1153,14 +1172,23 @@
                     body: JSON.stringify({ ids })
                 });
                 const data = await res.json();
-                hideLoading();
-                if (data.success) {
-                    const success = data.results.filter(r => r.status === 'success').length;
-                    showToast(`批量转换完成: ${success}/${ids.length} 成功`, 'success');
-                    setTimeout(() => location.reload(), 500);
+
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    return;
                 }
+
+                // 显示任务状态面板
+                showTaskPanel(true);
+                updateTaskPanel(`后台正在转换 ${ids.length} 个文件，您可以继续其他操作...`);
+
+                // 取消选中
+                document.querySelectorAll('.file-checkbox:checked').forEach(cb => cb.checked = false);
+                document.getElementById('selectAllTable').checked = false;
+
+                showToast('转换任务已创建', 'success');
+
             } catch (err) {
-                hideLoading();
                 showToast('批量转换失败: ' + err.message, 'error');
             }
         });
@@ -1441,7 +1469,7 @@
                 return;
             }
 
-            await downloadZhihuArticle(url, null, null, true);
+            await downloadZhihuArticle(url, null, null);
         });
 
         // 确认下载（带预览数据）
@@ -1453,20 +1481,16 @@
 
             const customTitle = document.getElementById('zhihuCustomTitle').value.trim();
             const customAuthor = document.getElementById('zhihuCustomAuthor').value.trim();
-            const autoConvert = document.getElementById('zhihuAutoConvert').checked;
 
             await downloadZhihuArticle(
                 zhihuPreviewData.url,
                 customTitle || zhihuPreviewData.title,
-                customAuthor || zhihuPreviewData.author,
-                autoConvert
+                customAuthor || zhihuPreviewData.author
             );
         });
 
-        // 下载知乎文章
-        async function downloadZhihuArticle(url, title, author, autoConvert) {
-            showLoading();
-
+        // 下载知乎文章（后台异步）
+        async function downloadZhihuArticle(url, title, author) {
             try {
                 const res = await fetch('/zhihu/download', {
                     method: 'POST',
@@ -1474,8 +1498,7 @@
                     body: JSON.stringify({
                         url,
                         title: title || '',
-                        author: author || '',
-                        auto_convert: autoConvert
+                        author: author || ''
                     })
                 });
                 const data = await res.json();
@@ -1485,20 +1508,23 @@
                     if (data.need_login) {
                         document.getElementById('zhihuLoginWarning').style.display = 'flex';
                     }
-                } else {
-                    showToast(data.message || '下载成功', 'success');
-                    // 清空输入
-                    document.getElementById('zhihuUrl').value = '';
-                    document.getElementById('zhihuPreviewCard').classList.remove('show');
-                    zhihuPreviewData = null;
-                    // 刷新页面
-                    setTimeout(() => location.reload(), 500);
+                    return;
                 }
+
+                // 显示任务状态面板
+                showTaskPanel(true);
+                updateTaskPanel('后台正在下载并转换，您可以继续其他操作...');
+
+                // 清空输入
+                document.getElementById('zhihuUrl').value = '';
+                document.getElementById('zhihuPreviewCard').classList.remove('show');
+                zhihuPreviewData = null;
+
+                showToast('下载任务已创建', 'success');
+
             } catch (err) {
                 showToast('下载失败: ' + err.message, 'error');
             }
-
-            hideLoading();
         }
 
         // 页面加载时检查知乎登录状态
@@ -1605,7 +1631,7 @@
                 return;
             }
 
-            await downloadWechatArticle(url, null, null, true);
+            await downloadWechatArticle(url, null, null);
         });
 
         // 确认下载（带预览数据）
@@ -1617,20 +1643,16 @@
 
             const customTitle = document.getElementById('wechatCustomTitle').value.trim();
             const customAuthor = document.getElementById('wechatCustomAuthor').value.trim();
-            const autoConvert = document.getElementById('wechatAutoConvert').checked;
 
             await downloadWechatArticle(
                 wechatPreviewData.url,
                 customTitle || wechatPreviewData.title,
-                customAuthor || wechatPreviewData.author,
-                autoConvert
+                customAuthor || wechatPreviewData.author
             );
         });
 
-        // 下载微信文章
-        async function downloadWechatArticle(url, title, author, autoConvert) {
-            showLoading();
-
+        // 下载微信文章（后台异步）
+        async function downloadWechatArticle(url, title, author) {
             try {
                 const res = await fetch('/wechat/download', {
                     method: 'POST',
@@ -1638,8 +1660,7 @@
                     body: JSON.stringify({
                         url,
                         title: title || '',
-                        author: author || '',
-                        auto_convert: autoConvert
+                        author: author || ''
                     })
                 });
                 const data = await res.json();
@@ -1649,20 +1670,23 @@
                     if (data.need_login) {
                         document.getElementById('wechatLoginWarning').style.display = 'flex';
                     }
-                } else {
-                    showToast(data.message || '下载成功', 'success');
-                    // 清空输入
-                    document.getElementById('wechatUrl').value = '';
-                    document.getElementById('wechatPreviewCard').classList.remove('show');
-                    wechatPreviewData = null;
-                    // 刷新页面
-                    setTimeout(() => location.reload(), 500);
+                    return;
                 }
+
+                // 显示任务状态面板
+                showTaskPanel(true);
+                updateTaskPanel('后台正在下载并转换，您可以继续其他操作...');
+
+                // 清空输入
+                document.getElementById('wechatUrl').value = '';
+                document.getElementById('wechatPreviewCard').classList.remove('show');
+                wechatPreviewData = null;
+
+                showToast('下载任务已创建', 'success');
+
             } catch (err) {
                 showToast('下载失败：' + err.message, 'error');
             }
-
-            hideLoading();
         }
 
         // 页面加载时检查微信登录状态
