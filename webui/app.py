@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # 添加 src 目录到路径
 
-from src.md2markdown_v5 import MarkdownToKFX
+from src.md2kfx import MarkdownToKFX
 
 # 知乎下载器导入
 ZHIHU_DOWNLOADER_PATH = Path(__file__).parent.parent / 'src' / ' downloader'

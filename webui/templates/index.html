@@ -450,7 +450,7 @@
                 <i class="bi bi-hdd" id="kindleIcon"></i>
                 <span id="kindleStatusText">检测 Kindle 连接...</span>
             </div>
-            <button class="btn btn-sm btn-outline-secondary" id="refreshKindleBtn">
+            <button class="btn btn-sm btn-outline-secondary" type="button" id="refreshKindleBtn">
                 <i class="bi bi-arrow-repeat"></i> 刷新
             </button>
         </div>
@@ -615,13 +615,17 @@
                     <div class="spinner-border spinner-border-sm me-2" role="status"></div>
                     <span id="taskStatusText">后台任务执行中...</span>
                 </div>
-                <button class="btn btn-sm btn-outline-primary" onclick="location.reload()">
-                    <i class="bi bi-arrow-repeat"></i> 刷新状态
-                </button>
             </div>
             <div class="progress mt-2" style="height: 5px;">
                 <div id="taskProgressBar" class="progress-bar" role="progressbar" style="width: 0%"></div>
             </div>
+        </div>
+
+        <!-- 刷新状态按钮 - 始终可见 -->
+        <div class="d-flex justify-content-end mb-3">
+            <button class="btn btn-outline-primary btn-sm" onclick="location.reload()">
+                <i class="bi bi-arrow-repeat"></i> 刷新状态
+            </button>
         </div>
 
         <!-- 批量操作 -->
@@ -1320,7 +1324,8 @@
         }
 
         // 刷新 Kindle 状态
-        document.getElementById('refreshKindleBtn').addEventListener('click', async () => {
+        document.getElementById('refreshKindleBtn').addEventListener('click', async (e) => {
+            e.preventDefault();
             showLoading();
             try {
                 await fetch('/kindle/refresh', { method: 'POST' });

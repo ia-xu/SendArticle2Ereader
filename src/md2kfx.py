@@ -319,16 +319,141 @@ class MarkdownToKFX:
         except ImportError:
             return content
 
+        # 占位符标记，用于后处理替换为 menclose 元素
+        CANCEL_MARKER = '\uE001'      # \cancel
+        BCANCEL_MARKER = '\uE002'     # \bcancel
+        XCANCEL_MARKER = '\uE003'     # \xcancel
+        END_MARKER = '\uE004'
+        TAG_MARKER = '\uE005'         # \tag 编号
+
+        def extract_braced_content(s, start):
+            """从 start 位置提取匹配的大括号内容，返回 (内容, 结束位置)"""
+            if start >= len(s) or s[start] != '{':
+                return '', start
+            depth = 0
+            for i in range(start, len(s)):
+                if s[i] == '{':
+                    depth += 1
+                elif s[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        return s[start+1:i], i + 1
+            return s[start+1:], len(s)
+
+        def remove_latex_command(cmd_name, latex):
+            """移除带有一个花括号参数的命令，保留内容：\cmd{content} -> content"""
+            pattern = r'\\' + cmd_name + r'\s*\{'
+            result = []
+            last_end = 0
+            for m in re.finditer(pattern, latex):
+                content, end = extract_braced_content(latex, m.end() - 1)
+                result.append(latex[last_end:m.start()])
+                result.append(content)
+                last_end = end
+            result.append(latex[last_end:])
+            return ''.join(result)
+
+        def remove_latex_command_two_args(cmd_name, latex):
+            """移除带有两个花括号参数的命令，保留第二个参数：\cmd{arg1}{arg2} -> arg2"""
+            pattern = r'\\' + cmd_name + r'\s*\{'
+            result = []
+            last_end = 0
+            for m in re.finditer(pattern, latex):
+                # 提取第一个参数
+                arg1, pos = extract_braced_content(latex, m.end() - 1)
+                # 跳过空格，提取第二个参数
+                while pos < len(latex) and latex[pos] in ' \t\n':
+                    pos += 1
+                if pos < len(latex) and latex[pos] == '{':
+                    arg2, end = extract_braced_content(latex, pos)
+                    result.append(latex[last_end:m.start()])
+                    result.append(arg2)
+                    last_end = end
+                else:
+                    result.append(latex[last_end:m.start()])
+                    last_end = m.end()
+            result.append(latex[last_end:])
+            return ''.join(result)
+
         def clean_latex_source(latex):
+            # 移除 label
             latex = re.sub(r'\\label\{.*?\}', '', latex)
+            # 粗体命令替换：\boldsymbol 和 \bm 都替换为 \mathbf
             latex = latex.replace(r'\boldsymbol', r'\mathbf')
+            latex = re.sub(r'\\bm\s*\{', r'\\mathbf{', latex)
+            # \tag{...} 转为占位符，后续显示为编号
+            latex = re.sub(r'\\tag\s*\{([^}]*)\}',
+                          lambda m: f'\\quad\\text{{{TAG_MARKER}({m.group(1)}){END_MARKER}}}', latex)
+            # \tag*{...} 无括号版本
+            latex = re.sub(r'\\tag\*\s*\{([^}]*)\}',
+                          lambda m: f'\\quad\\text{{{TAG_MARKER}{m.group(1)}{END_MARKER}}}', latex)
+            # \enclose{notation}{content} -> 用 menclose 标记包裹 content
+            # notation 如 "downdiagonalstrike" 对应 bcancel 效果
+            def replace_enclose(m):
+                notation = m.group(1)
+                content_start = m.end()
+                content, _ = extract_braced_content(latex, content_start - 1)
+                # 映射 notation 到标记
+                if 'downdiagonalstrike' in notation and 'updiagonalstrike' in notation:
+                    return f'\\text{{{XCANCEL_MARKER}{content}{END_MARKER}}}'
+                elif 'downdiagonalstrike' in notation:
+                    return f'\\text{{{BCANCEL_MARKER}{content}{END_MARKER}}}'
+                elif 'updiagonalstrike' in notation:
+                    return f'\\text{{{CANCEL_MARKER}{content}{END_MARKER}}}'
+                else:
+                    return content  # 其他类型直接保留内容
+            latex = re.sub(r'\\enclose\s*\{([^}]*)\}\s*\{', replace_enclose, latex)
+            # \cancel{...} 转为占位符，后续替换为 menclose
+            latex = re.sub(r'\\cancel\s*\{([^}]*)\}',
+                          lambda m: f'\\text{{{CANCEL_MARKER}{m.group(1)}{END_MARKER}}}', latex)
+            # \bcancel{...} 转为占位符
+            latex = re.sub(r'\\bcancel\s*\{([^}]*)\}',
+                          lambda m: f'\\text{{{BCANCEL_MARKER}{m.group(1)}{END_MARKER}}}', latex)
+            # \xcancel{...} 转为占位符
+            latex = re.sub(r'\\xcancel\s*\{([^}]*)\}',
+                          lambda m: f'\\text{{{XCANCEL_MARKER}{m.group(1)}{END_MARKER}}}', latex)
+            # 移除颜色命令 \color{...}{...} 或 \textcolor{...}{...}，保留内容（处理嵌套）
+            latex = remove_latex_command_two_args('color', latex)
+            latex = remove_latex_command_two_args('textcolor', latex)
+            # 移除单独的 \color{...}（无第二个参数的情况）
+            latex = remove_latex_command('color', latex)
+            # 移除行间距命令 [数字pt] 或 [数字]
+            latex = re.sub(r'\[\d+(?:\.\d+)?(?:pt|em|ex|cm|mm)?\]', '', latex)
+            # 清理 \\ 后面多余的空格
+            latex = re.sub(r'\\\\\s+', r'\\\\', latex)
             return latex.strip()
+
+        def postprocess_mathml(mathml):
+            """后处理 MathML：将占位符替换为 menclose 元素"""
+            # \cancel -> updiagonalstrike (正斜线 /)
+            mathml = re.sub(
+                f'{CANCEL_MARKER}([^{END_MARKER}]*){END_MARKER}',
+                r'<menclose notation="updiagonalstrike"><mtext>\1</mtext></menclose>',
+                mathml
+            )
+            # \bcancel -> downdiagonalstrike (反斜线 \)
+            mathml = re.sub(
+                f'{BCANCEL_MARKER}([^{END_MARKER}]*){END_MARKER}',
+                r'<menclose notation="downdiagonalstrike"><mtext>\1</mtext></menclose>',
+                mathml
+            )
+            # \xcancel -> updiagonalstrike downdiagonalstrike (X 形)
+            mathml = re.sub(
+                f'{XCANCEL_MARKER}([^{END_MARKER}]*){END_MARKER}',
+                r'<menclose notation="updiagonalstrike downdiagonalstrike"><mtext>\1</mtext></menclose>',
+                mathml
+            )
+            # \tag 编号保持原样（已经是文本形式）
+            mathml = mathml.replace(TAG_MARKER, '')
+            mathml = mathml.replace(END_MARKER, '')
+            return mathml
 
         def replace_formula(match, is_block=False):
             latex_content = match.group(1)
             clean_content = clean_latex_source(latex_content)
             try:
                 mathml = latex2mathml.converter.convert(clean_content)
+                mathml = postprocess_mathml(mathml)
                 tag = "div" if is_block else "span"
                 cls = "math-block" if is_block else "math-inline"
                 return f'<{tag} class="{cls}">{mathml}</{tag}>'
@@ -340,6 +465,7 @@ class MarkdownToKFX:
         def inline_cleanup(match):
             try:
                 mathml = latex2mathml.converter.convert(clean_latex_source(match.group(1)))
+                mathml = postprocess_mathml(mathml)
                 return f'<span class="math-inline">{mathml}</span>'
             except:
                 return match.group(0)
@@ -365,8 +491,8 @@ class MarkdownToKFX:
     def extract_toc(self, md_content):
         """从 Markdown 内容中提取标题生成目录结构"""
         toc_items = []
-        # 匹配 ## 到 ###### 的标题
-        pattern = r'^(#{2,6})\s+(.+)$'
+        # 匹配 # 到 ###### 的标题（1-6个#）
+        pattern = r'^(#{1,6})\s+(.+)$'
         # 用于追踪锚点计数，避免重复
         anchor_count = {}
 
@@ -388,6 +514,13 @@ class MarkdownToKFX:
                 'title': title,
                 'anchor': anchor
             })
+
+        # 如果第一个标题是一级标题且在文件开头附近，跳过它（通常是文章标题）
+        if toc_items and toc_items[0]['level'] == 1:
+            # 检查是否在文件前100行内
+            first_match = re.search(pattern, md_content, re.MULTILINE)
+            if first_match and first_match.start() < 500:  # 大约前100行
+                toc_items = toc_items[1:]
 
         return toc_items
 

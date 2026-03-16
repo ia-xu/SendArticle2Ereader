@@ -111,8 +111,8 @@ SPECIAL_CHAR_MAP = {
     '22BA': r'^\top',   # 常见的转置符号码点
     '2192': r'\rightarrow',
     '2190': r'\leftarrow',
-
-
+    '2217': r'\cdot',  # 星号转点乘
+    '3F5': r'\epsilon',  # 希腊字母小 epsilon
 }
 
 # 需要映射为普通 ASCII 的 Unicode 数学字母（Mathematical Alphanumeric Symbols）
@@ -636,271 +636,206 @@ class WeChatToMarkdown:
         """
 
         # 补充一些常用的符号映射
-        EXTENDED_MAP = {
-            '2217': r'\cdot',  # 星号转点乘
-            '2212': '-',  # 减号
-            '3F5': r'\epsilon',  # 希腊字母小 epsilon
-            '2211': r'\sum',
-        }
+
 
         def get_char_from_data_c(data_c: str) -> str:
-            if data_c in EXTENDED_MAP: return EXTENDED_MAP[data_c]
-            if data_c in SPECIAL_CHAR_MAP: return SPECIAL_CHAR_MAP[data_c]
-            if data_c in MATH_ALPHANUMERIC_MAP: return MATH_ALPHANUMERIC_MAP[data_c]
+            """完整版：保留所有映射，同时精准过滤绘图乱码，并修复粘连问题"""
+            if not data_c:
+                return ''
+
+            res = None
+            # --- 第一阶段：精准查表 ---
+            if data_c in SPECIAL_CHAR_MAP:
+                res = SPECIAL_CHAR_MAP[data_c]
+            elif data_c in MATH_ALPHANUMERIC_MAP:
+                res = MATH_ALPHANUMERIC_MAP[data_c]
+            elif data_c in GREEK_BOLD_MAP:
+                res = GREEK_BOLD_MAP[data_c]
+            elif data_c in GREEK_BOLD_SMALL_MAP:
+                res = GREEK_BOLD_SMALL_MAP[data_c]
+
+            if res is not None:
+                # 【关键修复】如果结果是 \开头的命令且以字母结尾，加一个空格防止粘连
+                if res.startswith('\\') and res[-1].isalpha():
+                    return res + ' '
+                return res
+
+            # --- 第二阶段：兜底转换与乱码过滤 ---
             try:
                 code_point = int(data_c, 16)
-                if 0xE000 <= code_point <= 0xF8FF: return ''
+                # 过滤 MathJax 的 PUA (私有区) 字符，范围 U+E000 - U+F8FF 都是绘图“零件”
+                if 0xE000 <= code_point <= 0xF8FF:
+                    return ''
                 return chr(code_point)
-            except:
+            except (ValueError, OverflowError):
                 return ''
-        # def get_char_from_data_c(data_c: str) -> str:
-        #     """完整版：保留所有映射，同时精准过滤绘图乱码，并修复粘连问题"""
-        #     if not data_c:
-        #         return ''
-        #
-        #     res = None
-        #     # --- 第一阶段：精准查表 ---
-        #     if data_c in SPECIAL_CHAR_MAP:
-        #         res = SPECIAL_CHAR_MAP[data_c]
-        #     elif data_c in MATH_ALPHANUMERIC_MAP:
-        #         res = MATH_ALPHANUMERIC_MAP[data_c]
-        #     elif data_c in GREEK_BOLD_MAP:
-        #         res = GREEK_BOLD_MAP[data_c]
-        #     elif data_c in GREEK_BOLD_SMALL_MAP:
-        #         res = GREEK_BOLD_SMALL_MAP[data_c]
-        #
-        #     if res is not None:
-        #         # 【关键修复】如果结果是 \开头的命令且以字母结尾，加一个空格防止粘连
-        #         # 例如 \gamma -> \gamma
-        #         if res.startswith('\\') and res[-1].isalpha():
-        #             return res + ' '
-        #         return res
-        #
-        #     # --- 第二阶段：兜底转换与乱码过滤 ---
-        #     try:
-        #         code_point = int(data_c, 16)
-        #         if 0xE000 <= code_point <= 0xF8FF:
-        #             return ''
-        #         return chr(code_point)
-        #     except (ValueError, OverflowError):
-        #         return ''
-        # def get_char_from_data_c(data_c: str) -> str:
-        #     """完整版：保留所有映射，同时精准过滤绘图乱码"""
-        #     if not data_c:
-        #         return ''
-        #
-        #     # --- 第一阶段：精准查表（保留你现有的所有特殊映射） ---
-        #     if data_c in SPECIAL_CHAR_MAP:
-        #         return SPECIAL_CHAR_MAP[data_c]
-        #
-        #     if data_c in MATH_ALPHANUMERIC_MAP:
-        #         return MATH_ALPHANUMERIC_MAP[data_c]
-        #
-        #     if data_c in GREEK_BOLD_MAP:
-        #         return GREEK_BOLD_MAP[data_c]
-        #
-        #     if data_c in GREEK_BOLD_SMALL_MAP:
-        #         return GREEK_BOLD_SMALL_MAP[data_c]
-        #
-        #
-        #     # --- 第二阶段：兜底转换与乱码过滤 ---
-        #     try:
-        #         code_point = int(data_c, 16)
-        #
-        #         # 【关键修复】MathJax 的 PUA (私有区) 字符过滤
-        #         # 范围 U+E000 - U+F8FF 都是 MathJax 用来拼凑大括号、长箭头的“零件”
-        #         # 它们在普通字体里没有对应字符，强行转码就会变成乱码方块
-        #         if 0xE000 <= code_point <= 0xF8FF:
-        #             return ''  # 丢弃绘图零件
-        #
-        #         return chr(code_point)
-        #     except (ValueError, OverflowError):
-        #         return ''
-
         # MathML node 到 LaTeX 的映射
-
         def parse_node(node, context='') -> str:
-            """递归解析 MathML 节点"""
+            """整合版：修复根号与对齐问题，同时保留全部原有语义转换逻辑"""
+
+            # --- 基础标签解析 ---
             if node.name == 'path':
-                # 字形路径，通过 data-c 属性识别字符
                 data_c = node.get('data-c', '')
                 return get_char_from_data_c(data_c)
 
-            if node.name == 'rect':  # 过滤掉根号的长横线、分数的横线等绘图零件
+            if node.name == 'rect':  # 彻底过滤掉根号的长横线、分数的横线等绘图零件
                 return ''
 
             if node.name == 'text':
-                # 文本节点（可能是中文注释如"选择遗忘"）
                 text = node.get_text()
                 return f'\\text{{{text}}}' if text else ''
 
             if node.name != 'g':
-                # 非分组元素，直接获取子元素
                 return ''.join(parse_node(child, context) for child in node.children)
 
             mml_node = node.get('data-mml-node', '')
-
             if not mml_node:
-                # 没有 data-mml-node，继续解析子元素
                 return ''.join(parse_node(child, context) for child in node.children)
 
-            # 处理不同类型的 MathML 节点
+            # --- 递归获取子节点文本（用于默认情况） ---
             children_text = ''.join(parse_node(child, mml_node) for child in node.children)
 
-            if mml_node == 'mi':  # 标识符
+            # --- 核心语义分发 ---
+            if mml_node == 'mi':
                 return children_text
-            elif mml_node == 'mn':  # 数字
+            elif mml_node == 'mn':
                 return children_text
-            elif mml_node == 'mo':  # 运算符
-                # 只要是以 \ 开头且以字母结尾的 LaTeX 命令，都建议加空格
+            elif mml_node == 'mo':
                 if children_text.startswith('\\') and children_text[-1].isalpha():
-                    # 如果末尾还没有空格，则补一个
                     if not children_text.endswith(' '):
                         return children_text + ' '
                 return children_text
 
-            elif mml_node == 'mtext':  # 文本
-                # 尝试从子元素中提取文本（微信 SVG 中文本在 <text> 标签内）
+            elif mml_node == 'mtext':
                 text_content = collect_text_from_svg(node)
                 if text_content:
                     return f'\\text{{{text_content}}}'
                 return f'\\text{{{children_text}}}' if children_text else ''
-            elif mml_node == 'msub':  # 下标
+
+            # --- 上下标处理 (保留你原有的 split_subscript_children 逻辑) ---
+            elif mml_node == 'msub':
                 parts = split_subscript_children(node)
                 if len(parts) >= 2:
-                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
-                    sub = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(
+                        parts[0], mml_node)
+                    sub = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(
+                        parts[1], mml_node)
                     return f'{base}_{{{sub}}}'
                 return children_text
-            elif mml_node == 'msubsup':  # 上下标
+
+            elif mml_node == 'msubsup':
                 parts = split_subscript_children(node)
                 if len(parts) >= 3:
-                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
-                    sup = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
-                    sub = ''.join(parse_node(c, mml_node) for c in parts[2].children) if parts[2].name == 'g' else parse_node(parts[2], mml_node)
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(
+                        parts[0], mml_node)
+                    sup = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(
+                        parts[1], mml_node)
+                    sub = ''.join(parse_node(c, mml_node) for c in parts[2].children) if parts[2].name == 'g' else parse_node(
+                        parts[2], mml_node)
                     return f'{base}^{{{sup}}}_{{{sub}}}'
                 return children_text
-            elif mml_node == 'msup':  # 上标
+
+            elif mml_node == 'msup':
                 parts = split_subscript_children(node)
                 if len(parts) >= 2:
-                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
-                    # 微信 SVG 中可能将 ^ 作为单独的 mo 节点
-                    # 如果 parts[1] 是 ^ 符号，需要跳过它，使用 parts[2] 作为上标
-                    sup_idx = 1
-                    if len(parts) >= 3:
-                        # 检查 parts[1] 是否是 ^ 符号
-                        check_text = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
-                        if check_text.strip() in ['^', '^\n', '\n^']:
-                            sup_idx = 2
-                    sup = ''.join(parse_node(c, mml_node) for c in parts[sup_idx].children) if parts[sup_idx].name == 'g' else parse_node(parts[sup_idx], mml_node)
-                    return f'{base}^{{{sup}}}'
+                    base = '{' + parse_node(parts[0]) + '}'
+                    sup = '{' + parse_node(parts[1]) + '}'
+                    # if '^' in base:
+                    return f'{base}^{sup}'
                 return children_text
-            if mml_node == 'msqrt':
-                # MathJax 的 msqrt 内部通常有 3 个主要部分：
-                # 1. 包含被开方内容的 <g> (data-mml-node 通常是具体的 mi/mn/mrow)
-                # 2. 根号符号 <g data-mml-node="mo">
-                # 3. 顶部的横线 <rect>
-                inner_content = ""
+
+            # --- 根号处理 (此处整合了修复逻辑) ---
+            elif mml_node == 'msqrt':
+                inner_parts = []
                 for child in node.children:
-                    # 排除掉作为符号零件的 mo (根号钩子) 和 rect (横线)
-                    if child.name == 'g' and child.get('data-mml-node') != 'mo':
-                        inner_content += parse_node(child, 'msqrt')
-                    elif child.name == 'g' and child.get('data-mml-node') == 'mo':
-                        continue  # 跳过钩子
-                return f'\\sqrt{{{inner_content.strip()}}}'
-            elif mml_node == 'mroot':  # 顺便修复 n 次根式（如 3次根号）
+                    if child.name == 'rect':
+                        continue
+                    # 微信 SVG 中根号符号会被标记为 data-mml-node="mo"，需要跳过
+                    if child.name == 'g' and child.get('data-mml-node') == 'mo':
+                        continue
+                    # 对于没有 data-mml-node 的 g 元素（通常是内容容器），递归解析其子元素
+                    if child.name == 'g' and not child.get('data-mml-node'):
+                        inner_parts.append(''.join(parse_node(c, 'msqrt') for c in child.children))
+                    else:
+                        inner_parts.append(parse_node(child, 'msqrt'))
+                inner_text = ''.join(inner_parts).strip()
+                return f'\\sqrt{{{inner_text}}}'
 
+            elif mml_node == 'mroot':
                 parts = split_subscript_children(node)
-
                 if len(parts) >= 2:
-                    # 第一个部分是内容，第二个部分是根指数
-
                     base_raw = "".join(
                         parse_node(c, mml_node) for c in (parts[0].children if parts[0].name == 'g' else [parts[0]]))
-
                     index = "".join(
                         parse_node(c, mml_node) for c in (parts[1].children if parts[1].name == 'g' else [parts[1]]))
-
+                    # 过滤掉内部可能误解析出的 sqrt 符号字符
                     base = base_raw.replace(r'\sqrt', '').strip()
-
                     return f'\\sqrt[{index}]{{{base}}}'
-
                 return children_text
 
+            # --- 注释与修饰 (保留你对 underbrace/overrightarrow 的识别) ---
             elif mml_node == 'munder':
                 parts = split_subscript_children(node)
                 if len(parts) >= 2:
-                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
-                    under = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
-
-                    # 如果 under 包含中文，通常是 \underbrace 结构
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(
+                        parts[0], mml_node)
+                    under = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(
+                        parts[1], mml_node)
                     if any('\u4e00' <= char <= '\u9fff' for char in under):
-                        # 清理 under 中可能残余的特殊空白或转义
                         clean_under = under.replace('\\text{', '').replace('}', '').strip()
                         return f'\\underbrace{{{base}}}_{{\\text{{{clean_under}}}}}'
                     return f'{{{base}}}_{{{under}}}'
 
-            elif mml_node == 'mover':  # 上标注释
+            elif mml_node == 'mover':
                 parts = split_subscript_children(node)
                 if len(parts) >= 2:
-                    # parts[0] 是底座，parts[1] 是上面的装饰
                     base = ''.join(
                         parse_node(c, mml_node) for c in (parts[0].children if parts[0].name == 'g' else [parts[0]]))
                     over_raw = ''.join(
                         parse_node(c, mml_node) for c in (parts[1].children if parts[1].name == 'g' else [parts[1]]))
-
-                    # 关键逻辑：识别并转换微信的长箭头零件
                     if r'\rightarrow' in over_raw:
                         return f'\\overrightarrow{{{base.strip()}}}'
                     if r'\leftarrow' in over_raw:
                         return f'\\overleftarrow{{{base.strip()}}}'
                     if over_raw.strip() in ['-', r'\text{-}']:
                         return f'\\overline{{{base.strip()}}}'
-
                     return f'{{{base}}}^{{{over_raw}}}'
                 return children_text
-            elif mml_node == 'munderover':  # 上下标注释（如求和符号）
+
+            elif mml_node == 'munderover':
                 parts = split_subscript_children(node)
                 if len(parts) >= 3:
-                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
-                    under = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
-                    over = ''.join(parse_node(c, mml_node) for c in parts[2].children) if parts[2].name == 'g' else parse_node(parts[2], mml_node)
+                    base = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(
+                        parts[0], mml_node)
+                    under = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(
+                        parts[1], mml_node)
+                    over = ''.join(parse_node(c, mml_node) for c in parts[2].children) if parts[2].name == 'g' else parse_node(
+                        parts[2], mml_node)
                     return f'{{{base}}}_{{{under}}}^{{{over}}}'
                 return children_text
-            elif mml_node == 'mfrac':  # 分数
+
+            elif mml_node == 'mfrac':
+
                 parts = split_subscript_children(node)
-                if len(parts) >= 2:
-                    num = ''.join(parse_node(c, mml_node) for c in parts[0].children) if parts[0].name == 'g' else parse_node(parts[0], mml_node)
-                    den = ''.join(parse_node(c, mml_node) for c in parts[1].children) if parts[1].name == 'g' else parse_node(parts[1], mml_node)
-                    return f'\\frac{{{num}}}{{{den}}}'
-                return children_text
+                num = parse_node(parts[0] , mml_node)
+                den = parse_node(parts[1] , mml_node)
+                return f'\\frac{{{num}}}{{{den}}}'
+
+            # --- 表格处理 (整合了 aligned 修复) ---
             elif mml_node == 'mtable':
                 rows = []
-                # 找到所有的行 (mtr)
                 for mtr in node.find_all('g', attrs={'data-mml-node': 'mtr'}, recursive=False):
                     cells = []
-                    # 找到行内所有的单元格 (mtd)
                     for mtd in mtr.find_all('g', attrs={'data-mml-node': 'mtd'}, recursive=False):
                         cells.append(parse_node(mtd, 'mtd').strip())
                     rows.append(' & '.join(cells))
-
-                # 如果是单列多行且带有 cases 逻辑，可以保留 cases；
-                # 但如果是多列公式对齐，aligned 环境更通用
                 if len(rows) > 1:
+                    # 检查是否包含 "="，如果包含，通常是方程组，使用 aligned 对齐效果最好
                     return '\\begin{aligned}\n' + ' \\\\\n'.join(rows) + '\n\\end{aligned}'
                 return ' \\\\\n'.join(rows)
-            elif mml_node == 'mtr':  # 表格行
-                return children_text
-            elif mml_node == 'mtd':  # 表格单元格
-                return children_text
-            elif mml_node == 'menclose':  # 包围框（可能是矩阵外框）
-                inner = ''.join(parse_node(c, mml_node) for c in node.children)
-                return inner
-            elif mml_node == 'math':  # 数学根节点
-                return children_text
-            elif mml_node == 'mstyle':  # 样式
-                return children_text
-            elif mml_node == 'TeXAtom':
+
+            # --- 穿透性节点 ---
+            elif mml_node in ['mtr', 'mtd', 'menclose', 'math', 'mstyle', 'TeXAtom']:
                 return children_text
             else:
                 return children_text
@@ -912,6 +847,9 @@ class WeChatToMarkdown:
             for child in node.children:
                 # 跳过纯装饰性的 svg 元素（大括号等）
                 if child.name == 'svg':
+                    continue
+                # 跳过装饰性的 rect 元素（分数横线、根号延长线等）
+                if child.name == 'rect':
                     continue
                 # 跳过空文本节点
                 if isinstance(child, str) and not child.strip():
@@ -1021,6 +959,7 @@ class WeChatToMarkdown:
             # 优先尝试从 SVG 解析 LaTeX 公式
             latex = self._svg_to_latex(svg)
             if latex:
+                latex = self._clean_latex(latex)
                 # 判断是块级公式还是行内公式
                 # 检查是否包含 mtable (矩阵/方程组) 或 menclose (带框公式)
                 has_block = svg.find(attrs={'data-mml-node': ['mtable', 'menclose']})
@@ -1067,30 +1006,51 @@ class WeChatToMarkdown:
                     # 删除 SVG 以避免乱码
                     svg.decompose()
 
+    def _clean_latex(self, latex: str) -> str:
+        """清洗 LaTeX 字符串，防止 Markdown 解析冲突"""
+        if not latex:
+            return ""
+
+        # 1. 基础清理：移除微信自带的干扰字符
+        latex = latex.replace('\u200b', '').replace('\xa0', ' ')
+        latex = latex.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+
+        # 2. 核心逻辑：给比较运算符和算子前后加空格 (针对你的 i < j 发现)
+        # 匹配 <, >, = 但排除已经被转义的情况（如 \<）
+        latex = re.sub(r'(?<!\\)([<>=])', r' \1 ', latex)
+
+        # 3. 修复 LaTeX 命令后的粘连（如 \alpha_{t} 变为 \alpha _{t}）
+        # 如果反斜杠命令后直接跟了下划线或字母，加个空格隔离
+        latex = re.sub(r'(\\[a-zA-Z]+)([_^])', r'\1 \2', latex)
+
+        # 4. 压缩多余空格并返回
+        return re.sub(r'\s+', ' ', latex).strip()
+
     def _process_wechat_elements(self, soup):
         """核心修复：在转换为文本前，手术式清除公式节点的干扰"""
 
         # 0. 先处理 SVG 数学公式（在处理 data-formula 之前）
         self._process_svg_formulas(soup)
 
-        # 1. 提取所有带 data-formula 的标签（无论它是 span, section 还是 svg）
+        # 1. 提取所有带 data-formula 的标签
         for formula_node in soup.find_all(attrs={"data-formula": True}):
-            latex = formula_node.get('data-formula')
+            raw_latex = formula_node.get('data-formula')
+            latex = self._clean_latex(raw_latex)
             if not latex:
                 continue
 
-            # 清理 latex 中可能的 HTML 实体
-            latex = latex.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-
+            # --- 核心修复：清理 LaTeX 内部的干扰 ---
+            # 移除零宽空格、换行符，并纠正 HTML 转义字符
+            # 使用新逻辑清洗公式
             f_type = formula_node.get('data-formula-type', '0')
 
             if f_type == '1':  # 块级公式
-                replacement = f'\n\n$$\n{latex}\n$$\n\n'
-            else:  # 行内公式，前后加空格防止与汉字粘连导致不渲染
-                replacement = f' ${latex}$ '
+                # 必须前后双换行，确保渲染器识别
+                replacement = f'\n\n$$\n{latex.strip()}\n$$\n\n'
+            else:  # 行内公式
+                # 前后加空格，防止与中文粘连导致部分渲染器失效
+                replacement = f' ${latex.strip()}$ '
 
-            # 【关键】replace_with 会把该节点及其子节点（SVG, 占位符等）全部从 DOM 树中移除
-            # 替换为我们干净的 LaTeX 文本
             formula_node.replace_with(replacement)
 
         # 2. 处理图片和表情（多线程下载）
@@ -1198,7 +1158,8 @@ class WeChatToMarkdown:
     def _convert_node(self, node) -> str:
         """递归转换 DOM 节点为 Markdown，清理不可见干扰字符"""
         if isinstance(node, str):
-            # 微信中充斥着零宽空格 (\u200b) 和不间断空格 (\xa0)，必须清除
+            # 已经在 _process_wechat_elements 处理过的公式会作为字符串传进来
+            # 我们只针对非公式部分的文本进行清理
             return node.replace('\u200b', '').replace('\xa0', ' ')
 
         if node.name is None:
@@ -1213,7 +1174,8 @@ class WeChatToMarkdown:
 
         # 分段与换行
         elif tag == 'p':
-            return f"{self._convert_children(node)}\n\n"
+            content = self._convert_children(node).strip()
+            return f"{content}\n\n" if content else ""
         elif tag == 'br':
             return '\n'
         elif tag == 'hr':
