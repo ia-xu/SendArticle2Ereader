@@ -1,4 +1,4 @@
-*.md
+uploads
 *.kfx
 *.json
 .claude
