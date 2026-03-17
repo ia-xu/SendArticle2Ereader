@@ -404,6 +404,39 @@
             border: 1px solid #ddd;
             display: none;
         }
+        /* arXiv 下载区域样式 */
+        .arxiv-zone {
+            border: 2px solid #b31b1b;
+            border-radius: 16px;
+            padding: 25px;
+            margin-top: 25px;
+            background: linear-gradient(135deg, #fff5f5 0%, #ffe6e6 100%);
+        }
+        .arxiv-zone .arxiv-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .arxiv-zone .arxiv-header i {
+            font-size: 1.5rem;
+            color: #b31b1b;
+            margin-right: 10px;
+        }
+        .arxiv-zone .arxiv-header h5 {
+            margin: 0;
+            color: #b31b1b;
+        }
+        .arxiv-preview-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 15px;
+            border: 1px solid #ddd;
+            display: none;
+        }
+        .arxiv-preview-card.show {
+            display: block;
+        }
         .wechat-preview-card.show {
             display: block;
         }
@@ -601,6 +634,57 @@
                     </div>
                     <div class="col-md-2">
                         <button class="btn btn-success btn-sm w-100" id="wechatConfirmDownloadBtn">
+                            <i class="bi bi-check-lg"></i> 确认下载
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- arXiv 下载区域 -->
+        <div class="arxiv-zone" id="arxivZone">
+            <div class="arxiv-header">
+                <i class="bi bi-file-earmark-pdf"></i>
+                <h5>arXiv 论文下载</h5>
+            </div>
+            <div class="row g-2">
+                <div class="col-md-8">
+                    <input type="text" class="form-control" id="arxivUrl"
+                           placeholder="输入 arXiv HTML 链接，如：https://arxiv.org/html/2602.02276v1">
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-outline-danger w-100" id="arxivPreviewBtn">
+                        <i class="bi bi-eye"></i> 预览
+                    </button>
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-danger w-100" id="arxivDownloadBtn">
+                        <i class="bi bi-download"></i> 下载
+                    </button>
+                </div>
+            </div>
+
+            <!-- 文章预览卡片 -->
+            <div class="arxiv-preview-card" id="arxivPreviewCard">
+                <div class="preview-title" id="arxivPreviewTitle">论文标题</div>
+                <div class="preview-author" id="arxivPreviewAuthor">
+                    <i class="bi bi-person"></i> 作者
+                </div>
+                <div class="preview-excerpt" id="arxivPreviewExcerpt">论文摘要...</div>
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control form-control-sm" id="arxivCustomTitle"
+                               placeholder="自定义标题 (可选)">
+                    </div>
+                    <div class="col-md-3">
+                        <input type="text" class="form-control form-control-sm" id="arxivCustomAuthor"
+                               placeholder="自定义作者 (可选)">
+                    </div>
+                    <div class="col-md-3">
+                        <small class="text-muted">下载将在后台执行</small>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-danger btn-sm w-100" id="arxivConfirmDownloadBtn">
                             <i class="bi bi-check-lg"></i> 确认下载
                         </button>
                     </div>
@@ -1696,6 +1780,128 @@
 
         // 页面加载时检查微信登录状态
         checkWechatStatus();
+
+        // ==================== arXiv 下载功能 ====================
+        let arxivPreviewData = null;
+
+        // 预览 arXiv 文章
+        document.getElementById('arxivPreviewBtn').addEventListener('click', async () => {
+            const url = document.getElementById('arxivUrl').value.trim();
+            if (!url) {
+                showToast('请输入 arXiv 链接', 'error');
+                return;
+            }
+
+            if (!url.includes('arxiv.org')) {
+                showToast('请输入有效的 arXiv 链接', 'error');
+                return;
+            }
+
+            showLoading();
+            try {
+                const res = await fetch('/arxiv/preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    hideLoading();
+                    return;
+                }
+
+                // 保存预览数据
+                arxivPreviewData = data;
+
+                // 显示预览卡片
+                document.getElementById('arxivPreviewTitle').textContent = data.title;
+                document.getElementById('arxivPreviewAuthor').innerHTML = `<i class="bi bi-person"></i> ${data.author}`;
+                document.getElementById('arxivPreviewExcerpt').textContent = data.excerpt;
+                document.getElementById('arxivPreviewCard').classList.add('show');
+
+                // 清空自定义输入
+                document.getElementById('arxivCustomTitle').value = '';
+                document.getElementById('arxivCustomAuthor').value = '';
+
+                showToast('预览成功', 'success');
+            } catch (err) {
+                showToast('预览失败：' + err.message, 'error');
+            }
+            hideLoading();
+        });
+
+        // 直接下载（无预览）
+        document.getElementById('arxivDownloadBtn').addEventListener('click', async () => {
+            const url = document.getElementById('arxivUrl').value.trim();
+            if (!url) {
+                showToast('请输入 arXiv 链接', 'error');
+                return;
+            }
+
+            if (!url.includes('arxiv.org')) {
+                showToast('请输入有效的 arXiv 链接', 'error');
+                return;
+            }
+
+            await downloadArxivArticle(url, null, null);
+        });
+
+        // 确认下载（带预览数据）
+        document.getElementById('arxivConfirmDownloadBtn').addEventListener('click', async () => {
+            if (!arxivPreviewData) {
+                showToast('请先预览论文', 'error');
+                return;
+            }
+
+            const customTitle = document.getElementById('arxivCustomTitle').value.trim();
+            const customAuthor = document.getElementById('arxivCustomAuthor').value.trim();
+
+            await downloadArxivArticle(
+                arxivPreviewData.url,
+                customTitle || arxivPreviewData.title,
+                customAuthor || arxivPreviewData.author
+            );
+        });
+
+        // 下载 arXiv 文章（后台异步）
+        async function downloadArxivArticle(url, title, author) {
+            try {
+                showLoading();
+                const res = await fetch('/arxiv/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url,
+                        title: title || '',
+                        author: author || ''
+                    })
+                });
+                const data = await res.json();
+                hideLoading();
+
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    return;
+                }
+
+                // 显示任务状态面板
+                showTaskPanel(true);
+                updateTaskPanel('后台正在下载并转换，您可以继续其他操作...');
+
+                // 清空输入
+                document.getElementById('arxivUrl').value = '';
+                document.getElementById('arxivPreviewCard').classList.remove('show');
+                arxivPreviewData = null;
+
+                showToast('下载任务已创建', 'success');
+
+            } catch (err) {
+                hideLoading();
+                showToast('下载失败：' + err.message, 'error');
+            }
+        }
     </script>
 </body>
 </html>

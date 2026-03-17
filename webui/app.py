@@ -4,6 +4,7 @@ Flask WebUI for Markdown to KFX Converter
 import os
 import sys
 import json
+import re
 import shutil
 import uuid
 import hashlib
@@ -38,6 +39,14 @@ try:
 except ImportError as e:
     print(f"[Warning] WeChat downloader not available: {e}")
     WECHAT_AVAILABLE = False
+
+# arXiv 下载器导入
+try:
+    from arxiv2markdown import ArxivToMarkdown, ArxivClient
+    ARXIV_AVAILABLE = True
+except ImportError as e:
+    print(f"[Warning] arXiv downloader not available: {e}")
+    ARXIV_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -1265,6 +1274,220 @@ def _do_wechat_download(task_id, url, custom_title, custom_author):
             'upload_time': datetime.now().isoformat(),
             'status': 'uploaded',
             'source': 'wechat',
+            'source_url': url
+        }
+        update_file_info(file_id, file_info)
+
+        # 执行转换
+        task_manager.update_task(task_id, progress=60, message='正在转换为 KFX...')
+        try:
+            output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+            kfx_converter = MarkdownToKFX(
+                markdown_file=str(md_path),
+                output_file=str(output_path),
+                title=title,
+                author=author
+            )
+            convert_result = kfx_converter.convert()
+
+            status = 'converted'
+            if convert_result.suffix == '.epub':
+                epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
+                if convert_result != epub_path:
+                    shutil.move(str(convert_result), str(epub_path))
+                status = 'converted_epub'
+
+            file_info['status'] = status
+            file_info['convert_time'] = datetime.now().isoformat()
+            update_file_info(file_id, file_info)
+
+        except Exception as e:
+            task_manager.update_task(task_id, progress=100, message=f'下载完成，转换失败: {str(e)}', result={
+                'file_id': file_id,
+                'name': title,
+                'author': author,
+                'convert_error': str(e)
+            })
+            return {'file_id': file_id, 'name': title, 'author': author, 'convert_error': str(e)}
+
+        task_manager.update_task(task_id, progress=100, message='下载并转换完成', result={
+            'file_id': file_id,
+            'name': title,
+            'author': author,
+            'status': status
+        })
+
+        return {'file_id': file_id, 'name': title, 'author': author, 'status': status}
+
+    except Exception as e:
+        error_msg = str(e)
+        task_manager.update_task(task_id, status='failed', error=error_msg)
+        raise
+
+
+# ==================== arXiv 下载功能 ====================
+
+@app.route('/arxiv/preview', methods=['POST'])
+def arxiv_preview():
+    """预览 arXiv 文章信息"""
+    if not ARXIV_AVAILABLE:
+        return jsonify({'error': 'arXiv downloader not available'}), 400
+
+    url = request.json.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'URL 不能为空'}), 400
+
+    # 验证 URL
+    if 'arxiv.org' not in url:
+        return jsonify({'error': '请输入有效的 arXiv 链接'}), 400
+
+    try:
+        client = ArxivClient()
+
+        # 标准化 URL
+        if not url.startswith('http'):
+            url = 'https://' + url
+
+        # 转换 abs 链接为 html 链接
+        if 'arxiv.org/abs/' in url:
+            url = url.replace('arxiv.org/abs/', 'arxiv.org/html/')
+
+        # 获取页面内容
+        html = client.fetch_page(url)
+        if not html:
+            return jsonify({'error': '获取页面失败，请检查链接是否正确'}), 500
+
+        soup = BeautifulSoup(html, 'html.parser')
+
+        # 提取文章 ID
+        article_id = client.extract_article_id(url) or 'unknown'
+
+        # 提取标题
+        title_elem = soup.select_one('.ltx_title') or soup.select_one('h1[class*="title"]') or soup.select_one('h1')
+        title = title_elem.get_text().strip() if title_elem else 'Untitled'
+        title = re.sub(r'^\d+\.\s*', '', title)  # 移除编号前缀
+
+        # 提取作者
+        authors_elem = soup.select_one('.ltx_authors')
+        if authors_elem:
+            authors = [a.get_text().strip() for a in authors_elem.select('.ltx_author')]
+            author = ', '.join(authors) if authors else 'Unknown'
+        else:
+            author = 'Unknown'
+
+        # 提取摘要
+        abstract_elem = soup.select_one('.ltx_abstract')
+        if abstract_elem:
+            # 移除标题
+            for h2 in abstract_elem.find_all('h2'):
+                h2.decompose()
+            excerpt = abstract_elem.get_text().strip()[:300] + '...'
+        else:
+            excerpt = ''
+
+        return jsonify({
+            'success': True,
+            'article_id': article_id,
+            'title': title,
+            'author': author,
+            'excerpt': excerpt,
+            'url': url
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'预览失败: {str(e)}'}), 500
+
+
+@app.route('/arxiv/download', methods=['POST'])
+def arxiv_download():
+    """下载 arXiv 文章并添加到文件列表（后台异步）"""
+    if not ARXIV_AVAILABLE:
+        return jsonify({'error': 'arXiv downloader not available'}), 400
+
+    url = request.json.get('url', '').strip()
+    custom_title = request.json.get('title') or ''
+    custom_author = request.json.get('author') or ''
+
+    if not url:
+        return jsonify({'error': 'URL 不能为空'}), 400
+
+    # 创建后台任务
+    task_id = task_manager.create_task('arxiv_download', {
+        'url': url,
+        'title': custom_title,
+        'author': custom_author
+    })
+
+    # 提交任务到线程池
+    task_manager.submit_task(task_id, _do_arxiv_download, url, custom_title, custom_author)
+
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'message': '任务已创建，正在后台执行'
+    })
+
+
+def _do_arxiv_download(task_id, url, custom_title, custom_author):
+    """执行 arXiv 文章下载（后台任务）"""
+    import re as re_module
+
+    try:
+        task_manager.update_task(task_id, progress=5, message='正在获取文章...')
+
+        # 生成文件 ID
+        file_id = str(uuid.uuid4())[:8]
+
+        # 创建转换器
+        converter = ArxivToMarkdown(output_dir=str(UPLOAD_FOLDER))
+
+        task_manager.update_task(task_id, progress=10, message='正在下载并转换...')
+
+        # 执行转换
+        success, markdown_content, output_file = converter.convert(
+            url=url,
+            custom_title=custom_title,
+            custom_author=custom_author
+        )
+
+        if not success or not output_file:
+            raise Exception('下载失败，请检查链接是否正确')
+
+        task_manager.update_task(task_id, progress=40, message='正在保存文件...')
+
+        # 读取下载的文件
+        downloaded_path = Path(output_file)
+        if not downloaded_path.exists():
+            raise Exception('文件保存失败')
+
+        # 从 Markdown 中提取标题
+        markdown_content = downloaded_path.read_text(encoding='utf-8')
+        title_match = re_module.search(r'^#\s+(.+)$', markdown_content, re.MULTILINE)
+        extracted_title = title_match.group(1).strip() if title_match else file_id
+
+        # 确定标题和作者
+        title = custom_title or extracted_title
+        author = custom_author or 'Unknown'
+
+        # 从 Markdown 中提取作者（如果未指定）
+        if not custom_author:
+            author_match = re_module.search(r'\*\*Authors:\*\*\s*(.+?)(?:\n|$)', markdown_content)
+            if author_match:
+                author = author_match.group(1).strip()
+
+        # 重命名文件为 file_id.md
+        md_path = UPLOAD_FOLDER / f"{file_id}.md"
+        if downloaded_path != md_path:
+            shutil.move(str(downloaded_path), str(md_path))
+
+        # 记录到数据库
+        file_info = {
+            'name': title,
+            'original_name': f"{title}.md",
+            'author': author,
+            'upload_time': datetime.now().isoformat(),
+            'status': 'uploaded',
+            'source': 'arxiv',
             'source_url': url
         }
         update_file_info(file_id, file_info)
