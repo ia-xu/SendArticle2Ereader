@@ -71,6 +71,31 @@
             font-weight: 600;
             border-bottom: 2px solid #dee2e6;
         }
+        .file-table th.sortable {
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.2s;
+        }
+        .file-table th.sortable:hover {
+            background: #e9ecef;
+        }
+        .file-table th.sortable i {
+            opacity: 0.3;
+            font-size: 0.8em;
+            margin-left: 4px;
+        }
+        .file-table th.sortable.sort-asc i::before {
+            content: "\F128";
+        }
+        .file-table th.sortable.sort-asc i {
+            opacity: 1;
+        }
+        .file-table th.sortable.sort-desc i::before {
+            content: "\F126";
+        }
+        .file-table th.sortable.sort-desc i {
+            opacity: 1;
+        }
         .file-row:hover {
             background: #f8f9fa;
         }
@@ -738,11 +763,11 @@
                 <thead>
                     <tr>
                         <th width="40"><input type="checkbox" class="form-check-input" id="selectAllTable"></th>
-                        <th>文件名</th>
-                        <th>作者</th>
-                        <th>上传时间</th>
-                        <th>状态</th>
-                        <th>Kindle</th>
+                        <th class="sortable" data-sort="name">文件名 <i class="bi bi-arrow-down-up"></i></th>
+                        <th class="sortable" data-sort="author">作者 <i class="bi bi-arrow-down-up"></i></th>
+                        <th class="sortable" data-sort="time">上传时间 <i class="bi bi-arrow-down-up"></i></th>
+                        <th class="sortable" data-sort="status">状态 <i class="bi bi-arrow-down-up"></i></th>
+                        <th class="sortable" data-sort="kindle">Kindle <i class="bi bi-arrow-down-up"></i></th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -1229,6 +1254,7 @@
 
         // 批量选择
         const selectAllCheckbox = document.getElementById('selectAllTable');
+        const selectAllInBatch = document.getElementById('selectAll');
         const fileCheckboxes = document.querySelectorAll('.file-checkbox');
         const batchActions = document.getElementById('batchActions');
 
@@ -1237,13 +1263,86 @@
             batchActions.style.display = checked.length > 0 ? 'block' : 'none';
         }
 
+        function syncSelectAllCheckboxes() {
+            const allChecked = document.querySelectorAll('.file-checkbox:checked').length === fileCheckboxes.length;
+            selectAllCheckbox.checked = allChecked && fileCheckboxes.length > 0;
+            selectAllInBatch.checked = allChecked && fileCheckboxes.length > 0;
+        }
+
         selectAllCheckbox.addEventListener('change', () => {
             fileCheckboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+            selectAllInBatch.checked = selectAllCheckbox.checked;
+            updateBatchActions();
+        });
+
+        selectAllInBatch.addEventListener('change', () => {
+            fileCheckboxes.forEach(cb => cb.checked = selectAllInBatch.checked);
+            selectAllCheckbox.checked = selectAllInBatch.checked;
             updateBatchActions();
         });
 
         fileCheckboxes.forEach(cb => {
-            cb.addEventListener('change', updateBatchActions);
+            cb.addEventListener('change', () => {
+                updateBatchActions();
+                syncSelectAllCheckboxes();
+            });
+        });
+
+        // 排序功能
+        let currentSort = { column: null, direction: 'asc' };
+
+        document.querySelectorAll('.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const sortKey = th.dataset.sort;
+                const tbody = document.getElementById('fileList');
+                const rows = Array.from(tbody.querySelectorAll('.file-row'));
+
+                if (currentSort.column === sortKey) {
+                    currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    currentSort.column = sortKey;
+                    currentSort.direction = 'asc';
+                }
+
+                // 更新排序图标
+                document.querySelectorAll('.sortable').forEach(header => {
+                    header.classList.remove('sort-asc', 'sort-desc');
+                });
+                th.classList.add(currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+                // 获取排序值
+                function getSortValue(row, key) {
+                    switch (key) {
+                        case 'name':
+                            return row.querySelector('.file-display-name')?.textContent.trim().toLowerCase() || '';
+                        case 'author':
+                            return row.querySelector('.author-display')?.textContent.trim().toLowerCase() || '';
+                        case 'time':
+                            return row.querySelector('.time-cell')?.textContent.trim() || '';
+                        case 'status':
+                            return row.querySelector('.status-badge')?.textContent.trim().toLowerCase() || '';
+                        case 'kindle':
+                            const kindleBtn = row.querySelector('.send-kindle-btn');
+                            if (kindleBtn) {
+                                return kindleBtn.textContent.includes('移除') ? '1' : '0';
+                            }
+                            return '-1';
+                        default:
+                            return '';
+                    }
+                }
+
+                rows.sort((a, b) => {
+                    const aVal = getSortValue(a, sortKey);
+                    const bVal = getSortValue(b, sortKey);
+
+                    if (aVal === bVal) return 0;
+                    const cmp = aVal < bVal ? -1 : 1;
+                    return currentSort.direction === 'asc' ? cmp : -cmp;
+                });
+
+                rows.forEach(row => tbody.appendChild(row));
+            });
         });
 
         // 批量转换
@@ -1273,6 +1372,7 @@
                 // 取消选中
                 document.querySelectorAll('.file-checkbox:checked').forEach(cb => cb.checked = false);
                 document.getElementById('selectAllTable').checked = false;
+                document.getElementById('selectAll').checked = false;
 
                 showToast('转换任务已创建', 'success');
 
