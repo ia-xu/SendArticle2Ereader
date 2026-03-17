@@ -267,10 +267,48 @@ class MarkdownToKFX:
             return None
 
     def preprocess_md(self, content):
-        """预处理：清理重影 + 处理代码块转图片 + 清理问题字符"""
+        """预处理：清理重影 + 修复格式错误的公式 + 处理代码块转图片 + 清理问题字符"""
         # 清理重复的公式标记（重影问题）
         content = re.sub(r'\$\$(.*?)\$\$\s*\1', r'$$\1$$', content, flags=re.DOTALL)
         content = re.sub(r'\$([^\$\n]+)\$\s*\1', r'$\1$', content)
+
+        # 修复格式错误的公式：$...$$...$ 或 $$...$...$$ 等混合格式
+        # 问题模式1: $...$$...$ (行内开始，中间有$$，行内结束)
+        # 这通常是因为知乎解析错误，多个公式被合并了
+        # 策略：将 $$ 替换为 $ 来分割成两个独立的行内公式
+        def fix_mixed_formula(match):
+            text = match.group(0)
+            # 如果包含 $$ 但不是以 $$ 开始或结束
+            if '$$' in text and not text.startswith('$$') and not text.endswith('$$'):
+                # 将内部的 $$ 替换为分隔符
+                # 例如: $A$$B$ -> $A$ $B$
+                parts = text.split('$$')
+                result = []
+                for i, part in enumerate(parts):
+                    if i == 0:
+                        # 第一部分，去掉开头的 $
+                        if part.startswith('$'):
+                            result.append(part[1:])
+                        else:
+                            result.append(part)
+                    elif i == len(parts) - 1:
+                        # 最后一部分，去掉结尾的 $
+                        if part.endswith('$'):
+                            result.append(part[:-1])
+                        else:
+                            result.append(part)
+                    else:
+                        result.append(part)
+                return ' $' + '$ $'.join(result) + '$ '
+            return text
+
+        # 匹配可能包含 $$ 的行内公式
+        content = re.sub(r'\$[^$]*\$\$[^$]*\$', fix_mixed_formula, content)
+
+        # 问题模式2: 独立的 $$ (不是块级公式的一部分)
+        # 匹配单独出现的 $$ 且前后不是 $$ 的情况
+        # 这通常意味着公式未正确闭合
+        content = re.sub(r'(?<!\$)\$\$(?!\$)(?!\s*$)(?!\s*\n)', '$', content)
 
         # 清理可能导致 KFX 问题的特殊 Unicode 字符
         # 替换全角空格为普通空格
@@ -661,7 +699,7 @@ class MarkdownToKFX:
         img {{ max-width: 100%; height: auto; display: block; margin: 1.2em auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
         .math-block {{ text-align: center; margin: 1.5em 0; }}
         pre {{ background: #f4f4f4; padding: 1em; border-radius: 4px; white-space: pre-wrap; }}
-        .toc {{ bacexkground: #f8f9fa; padding: 1.5em; border-radius: 8px; margin-bottom: 2em; border: 1px solid #e9ecef; }}
+        .toc {{ background: #f8f9fa; padding: 1.5em; border-radius: 8px; margin-bottom: 2em; border: 1px solid #e9ecef; }}
         .toc h2 {{ margin-top: 0; margin-bottom: 1em; color: #333; border-bottom: 1px solid #dee2e6; padding-bottom: 0.5em; }}
         .toc ul {{ list-style: none; padding-left: 0; margin: 0; }}
         .toc li {{ margin: 0.3em 0; }}

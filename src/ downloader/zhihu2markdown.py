@@ -343,6 +343,11 @@ class ZhihuToMarkdown:
         # 转换为 Markdown
         md = self._convert_node(soup)
 
+        # 清理零宽字符（知乎常引入的不可见字符）
+        # U+200B 零宽空格, U+200C 零宽非连接符, U+200D 零宽连接符
+        # U+FEFF BOM/零宽非断空格, U+2060 字连接符
+        md = re.sub(r'[\u200b\u200c\u200d\ufeff\u2060]', '', md)
+
         # 清理多余空行
         md = re.sub(r'\n{3,}', '\n\n', md)
         md = md.strip()
