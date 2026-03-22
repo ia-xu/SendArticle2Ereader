@@ -502,11 +502,11 @@
 </head>
 <body>
     <div class="main-container">
-        <!-- Kindle 状态栏 -->
+        <!-- 阅读器状态栏 -->
         <div class="kindle-status-bar" id="kindleStatusBar">
             <div>
                 <i class="bi bi-hdd" id="kindleIcon"></i>
-                <span id="kindleStatusText">检测 Kindle 连接...</span>
+                <span id="kindleStatusText">检测阅读器连接...</span>
             </div>
             <button class="btn btn-sm btn-outline-secondary" type="button" id="refreshKindleBtn">
                 <i class="bi bi-arrow-repeat"></i> 刷新
@@ -514,7 +514,13 @@
         </div>
         <div class="page-header">
             <h1><i class="bi bi-file-earmark-text"></i> Markdown to KFX Converter</h1>
-            <p>上传 Markdown 文件，一键转换为 Kindle KFX 格式</p>
+            <p>上传 Markdown 文件，一键转换为墨水屏阅读器支持的格式</p>
+            <div class="mt-2">
+                <label class="form-check-label">
+                    <input type="checkbox" class="form-check-input me-1" id="enableEpubSupport" {% if enable_epub %}checked{% endif %}>
+                    启用 EPUB 支持（适用于国产墨水屏阅读器）
+                </label>
+            </div>
         </div>
 
         <!-- 上传区域 -->
@@ -746,13 +752,15 @@
                     <i class="bi bi-arrow-repeat"></i> 批量转换
                 </button>
                 <button class="btn btn-sm btn-send-kindle" id="batchPushKfxBtn">
-                    <i class="bi bi-send"></i> 推送 KFX 到 Kindle
+                    <i class="bi bi-send"></i> 推送 KFX 到阅读器
                 </button>
+                {% if enable_epub %}
                 <button class="btn btn-sm" id="batchPushEpubBtn" style="background: #fd7e14; border-color: #fd7e14; color: white;">
-                    <i class="bi bi-send"></i> 推送 EPUB 到 Kindle
+                    <i class="bi bi-send"></i> 推送 EPUB 到阅读器
                 </button>
+                {% endif %}
                 <button class="btn btn-sm btn-delete-kindle" id="batchDeleteKindleBtn">
-                    <i class="bi bi-eject"></i> 批量移除 Kindle
+                    <i class="bi bi-eject"></i> 批量移除阅读器
                 </button>
                 <button class="btn btn-sm btn-danger" id="batchDeleteBtn">
                     <i class="bi bi-trash"></i> 批量删除
@@ -770,7 +778,7 @@
                         <th class="sortable" data-sort="author">作者 <i class="bi bi-arrow-down-up"></i></th>
                         <th class="sortable" data-sort="time">上传时间 <i class="bi bi-arrow-down-up"></i></th>
                         <th class="sortable" data-sort="status">状态 <i class="bi bi-arrow-down-up"></i></th>
-                        <th class="sortable" data-sort="kindle">Kindle <i class="bi bi-arrow-down-up"></i></th>
+                        <th class="sortable" data-sort="kindle">阅读器 <i class="bi bi-arrow-down-up"></i></th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -795,7 +803,7 @@
                             <td>
                                 {% if file.status == 'converted' %}
                                 <span class="status-badge status-converted">已转换 KFX</span>
-                                {% elif file.status == 'converted_epub' %}
+                                {% elif file.status == 'converted_epub' and enable_epub %}
                                 <span class="status-badge status-converted_epub">已转换 EPUB</span>
                                 {% elif file.status == 'uploaded' %}
                                 <span class="status-badge status-uploaded">待转换</span>
@@ -808,13 +816,13 @@
                             </td>
                             <td>
                                 <div class="btn-group" role="group">
-                                    {% if file.has_kfx or file.has_epub %}
+                                    {% if file.has_kfx or (enable_epub and file.has_epub) %}
                                         {% if file.is_imported %}
-                                        <button class="btn btn-sm btn-delete-kindle send-kindle-btn" data-id="{{ file.id }}" title="从 Kindle 删除">
+                                        <button class="btn btn-sm btn-delete-kindle send-kindle-btn" data-id="{{ file.id }}" title="从阅读器删除">
                                             <i class="bi bi-eject"></i> 移除
                                         </button>
                                         {% else %}
-                                        <button class="btn btn-sm btn-send-kindle send-kindle-btn" data-id="{{ file.id }}" title="推送到 Kindle">
+                                        <button class="btn btn-sm btn-send-kindle send-kindle-btn" data-id="{{ file.id }}" title="推送到阅读器">
                                             <i class="bi bi-send"></i> 推送
                                         </button>
                                         {% endif %}
@@ -843,7 +851,7 @@
                                         <i class="bi bi-download"></i> KFX
                                     </button>
                                     {% endif %}
-                                    {% if file.has_epub %}
+                                    {% if enable_epub and file.has_epub %}
                                     <button class="btn btn-sm btn-download-epub download-btn" data-id="{{ file.id }}" data-type="epub" title="下载 EPUB">
                                         <i class="bi bi-download"></i> EPUB
                                     </button>
@@ -1008,6 +1016,29 @@
 
         function hideLoading() {
             document.getElementById('loadingOverlay').style.display = 'none';
+        }
+
+        // ==================== EPUB 支持开关 ====================
+        const enableEpubCheckbox = document.getElementById('enableEpubSupport');
+        if (enableEpubCheckbox) {
+            enableEpubCheckbox.addEventListener('change', async (e) => {
+                const enableEpub = e.target.checked;
+                try {
+                    const res = await fetch('/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enable_epub_support: enableEpub })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        showToast(enableEpub ? '已启用 EPUB 支持' : '已关闭 EPUB 支持', 'success');
+                        // 刷新页面以应用设置
+                        setTimeout(() => location.reload(), 500);
+                    }
+                } catch (err) {
+                    showToast('保存设置失败: ' + err.message, 'error');
+                }
+            });
         }
 
         // ==================== 后台任务状态 ====================
@@ -1411,17 +1442,17 @@
             }
         });
 
-        // 批量推送 KFX 到 Kindle
+        // 批量推送 KFX 到阅读器
         document.getElementById('batchPushKfxBtn').addEventListener('click', async () => {
             const checked = document.querySelectorAll('.file-checkbox:checked');
             if (checked.length === 0) return;
 
             if (!kindleConnected) {
-                showToast('Kindle 未连接，请先插入 Kindle', 'error');
+                showToast('阅读器未连接，请先插入阅读器', 'error');
                 return;
             }
 
-            if (!confirm(`确定要推送选中的 ${checked.length} 个 KFX 文件到 Kindle 吗？`)) return;
+            if (!confirm(`确定要推送选中的 ${checked.length} 个 KFX 文件到阅读器吗？`)) return;
 
             showLoading();
             const ids = Array.from(checked).map(cb => cb.dataset.id);
@@ -1445,51 +1476,54 @@
             }
         });
 
-        // 批量推送 EPUB 到 Kindle
-        document.getElementById('batchPushEpubBtn').addEventListener('click', async () => {
-            const checked = document.querySelectorAll('.file-checkbox:checked');
-            if (checked.length === 0) return;
+        // 批量推送 EPUB 到阅读器
+        const batchPushEpubBtn = document.getElementById('batchPushEpubBtn');
+        if (batchPushEpubBtn) {
+            batchPushEpubBtn.addEventListener('click', async () => {
+                const checked = document.querySelectorAll('.file-checkbox:checked');
+                if (checked.length === 0) return;
 
-            if (!kindleConnected) {
-                showToast('Kindle 未连接，请先插入 Kindle', 'error');
-                return;
-            }
-
-            if (!confirm(`确定要推送选中的 ${checked.length} 个 EPUB 文件到 Kindle 吗？`)) return;
-
-            showLoading();
-            const ids = Array.from(checked).map(cb => cb.dataset.id);
-            try {
-                const res = await fetch('/batch_push_kindle', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids, file_type: 'epub' })
-                });
-                const data = await res.json();
-                hideLoading();
-                if (data.success) {
-                    showToast(`EPUB 推送完成：${data.success_count}/${data.total} 成功`, 'success');
-                    setTimeout(() => location.reload(), 500);
-                } else {
-                    showToast('EPUB 推送失败', 'error');
+                if (!kindleConnected) {
+                    showToast('阅读器未连接，请先插入阅读器', 'error');
+                    return;
                 }
-            } catch (err) {
-                hideLoading();
-                showToast('EPUB 推送失败：' + err.message, 'error');
-            }
-        });
 
-        // 批量从 Kindle 删除
+                if (!confirm(`确定要推送选中的 ${checked.length} 个 EPUB 文件到阅读器吗？`)) return;
+
+                showLoading();
+                const ids = Array.from(checked).map(cb => cb.dataset.id);
+                try {
+                    const res = await fetch('/batch_push_kindle', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids, file_type: 'epub' })
+                    });
+                    const data = await res.json();
+                    hideLoading();
+                    if (data.success) {
+                        showToast(`EPUB 推送完成：${data.success_count}/${data.total} 成功`, 'success');
+                        setTimeout(() => location.reload(), 500);
+                    } else {
+                        showToast('EPUB 推送失败', 'error');
+                    }
+                } catch (err) {
+                    hideLoading();
+                    showToast('EPUB 推送失败：' + err.message, 'error');
+                }
+            });
+        }
+
+        // 批量从阅读器删除
         document.getElementById('batchDeleteKindleBtn').addEventListener('click', async () => {
             const checked = document.querySelectorAll('.file-checkbox:checked');
             if (checked.length === 0) return;
 
             if (!kindleConnected) {
-                showToast('Kindle 未连接，请先插入 Kindle', 'error');
+                showToast('阅读器未连接，请先插入阅读器', 'error');
                 return;
             }
 
-            if (!confirm(`确定要从 Kindle 移除选中的 ${checked.length} 个文件吗？`)) return;
+            if (!confirm(`确定要从阅读器移除选中的 ${checked.length} 个文件吗？`)) return;
 
             showLoading();
             const ids = Array.from(checked).map(cb => cb.dataset.id);
@@ -1536,11 +1570,11 @@
             if (data.connected) {
                 statusBar.className = 'kindle-status-bar connected';
                 kindleIcon.className = 'bi bi-hdd-check text-success';
-                statusText.innerHTML = '<strong>Kindle 已连接</strong> - ' + data.path;
+                statusText.innerHTML = '<strong>阅读器已连接</strong> - ' + data.path;
             } else {
                 statusBar.className = 'kindle-status-bar disconnected';
                 kindleIcon.className = 'bi bi-hdd text-danger';
-                statusText.innerHTML = '<strong>Kindle 未连接</strong> - 请插入 Kindle 后刷新';
+                statusText.innerHTML = '<strong>阅读器未连接</strong> - 请插入阅读器后刷新';
             }
         }
 
@@ -1551,14 +1585,14 @@
             try {
                 await fetch('/kindle/refresh', { method: 'POST' });
                 await checkKindleStatus();
-                showToast('Kindle 状态已刷新', 'success');
+                showToast('阅读器状态已刷新', 'success');
             } catch (err) {
                 showToast('刷新失败：' + err.message, 'error');
             }
             hideLoading();
         });
 
-        // 推送到 Kindle / 从 Kindle 删除
+        // 推送到阅读器 / 从阅读器删除
         document.querySelectorAll('.send-kindle-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const fileId = btn.dataset.id;
@@ -1566,7 +1600,7 @@
                 const actionName = isImported ? '弹出' : '推送';
 
                 if (!kindleConnected) {
-                    showToast('Kindle 未连接，请先插入 Kindle', 'error');
+                    showToast('阅读器未连接，请先插入阅读器', 'error');
                     return;
                 }
 
@@ -1575,7 +1609,7 @@
                     const url = isImported ? '/kindle/delete/' + fileId : '/kindle/push/' + fileId;
                     const res = await fetch(url, { method: 'POST' });
                     const data = await res.json();
-                    console.log(`${actionName} Kindle 响应:`, data);
+                    console.log(`${actionName} 阅读器响应:`, data);
 
                     if (data.success) {
                         showToast(data.message || `${actionName}成功`, 'success');
@@ -1584,7 +1618,7 @@
                         showToast(data.message || `${actionName}失败`, 'error');
                     }
                 } catch (err) {
-                    console.error(`${actionName} Kindle 错误:`, err);
+                    console.error(`${actionName} 阅读器错误:`, err);
                     showToast('操作失败：' + err.message, 'error');
                 }
                 hideLoading();

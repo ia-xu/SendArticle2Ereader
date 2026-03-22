@@ -1,34 +1,60 @@
-# toKindle
+# toEreader
 
-将网络文章转换为 Kindle 友好格式的工具集。
+将网络文章转换为墨水屏阅读器友好格式的工具集。
 
-- 目前仅支持了 windows / mac 尚未适配 ， 欢迎大佬帮个忙测测，改改代码
-- 目前对于 kpw6 等设备:
-  - windows 中 kpw6 等使用的是 MTP（媒体传输协议） 模式，在Windows中显示为便携设备/媒体设备，而不是传统的U盘模式（大容量存储设备）
-  - 连接后windows 不会给设备分配盘符，因此无法直接使用该 webui 导入到kindle
-  - 只能够将本地的一个文件夹当作 kindle 导出的文件夹 (修改 src/config.py 中的 KINDLE_ARTICLE_PATH)
-  - 然后手动将转换好的 kfx 导入内容到 kindle 当中
-  - 欢迎大佬帮个忙想个办法 : )
+## 支持的阅读器
+
+本项目支持以下墨水屏阅读器设备：
+
+### Kindle 系列
+  - 导入 KFX 格式
+
+
+### 国产墨水屏阅读器（EPUB 格式）
+  - 导入 EPUB 格式
+
+> **说明**：国产阅读器大多原生支持 EPUB 格式，无需转换为 KFX。本工具同时输出 KFX 和 EPUB 两种格式，您可以根据设备选择合适的格式导入。
+
+---
+
+## 重要提示
+
+- 目前仅支持了 Windows，Mac 尚未适配，欢迎大佬帮个忙测测，改改代码
+- 对于 Kindle Paperwhite 6 等设备：
+  - Windows 中 KPW6 等使用的是 MTP（媒体传输协议）模式，在 Windows 中显示为便携设备/媒体设备，而不是传统的 U 盘模式（大容量存储设备）
+  - 连接后 Windows 不会给设备分配盘符，因此无法直接使用该 WebUI 导入到 Kindle
+    - 方法1:
+      - windows 电脑安装 mtpdriver， 为 mtp 设备分配一个盘符，此时就可以直接使用原来的方法
+    - 方法2
+      - 只能将本地的一个文件夹当作导出的文件夹（修改 `src/config.py` 中的 `KINDLE_ARTICLE_PATH`）
+      - 然后手动将转换好的 KFX/EPUB 导入到设备当中
+    - 方法3
+      - 使用实验性质的功能，利用powershell进行文件传输
+      - (目前尚未开发)
+    
+      
+
+---
 
 ## 项目功能与目标
 
-本项目旨在帮助用户将网络文章（知乎专栏、微信公众号、arXiv 论文等）转换为 Kindle 设备可读的 KFX 格式电子书。
+本项目旨在帮助用户将网络文章（知乎专栏、微信公众号、arXiv 论文等）转换为墨水屏阅读器可读的电子书格式。
 
 **核心功能：**
 
 - **知乎文章下载**：抓取知乎专栏文章并转换为 Markdown，支持公式、代码块、图片等
 - **微信公众号文章下载**：抓取微信公众号文章，保留原文格式
 - **arXiv 论文下载**：从 arXiv 下载学术论文，转换为 Markdown 格式
-- **Markdown 转 KFX**：将 Markdown 文件转换为 Kindle KFX 格式，支持目录、数学公式、代码高亮等
+- **Markdown 转电子书**：将 Markdown 文件转换为 KFX/EPUB 格式，支持目录、数学公式、代码高亮等
 - **Web 界面**：提供简洁的 Web 界面，一站式完成下载和转换
 
 **转换特点：**
 
 - 数学公式支持（LaTeX/MathML）
-- 代码块语法高亮并转为图片（适配 Kindle）
+- 代码块语法高亮并转为图片（适配墨水屏）
 - 自动生成目录
 - 图片自动下载并优化
-- 支持 EPUB/KFX 输出
+- 同时输出 KFX 和 EPUB 两种格式
 
 ---
 
@@ -41,7 +67,8 @@ tokindle/
 │   │   ├── zhihu2markdown.py          # 知乎文章下载器
 │   │   ├── wechat2markdown.py         # 微信公众号下载器
 │   │   └── arxiv2markdown.py          # arXiv 论文下载器
-│   └── md2kfx.py                      # Markdown 转 KFX 核心模块
+│   ├── config.py                      # 配置文件
+│   └── md2kfx.py                      # Markdown 转 KFX/EPUB 核心模块
 ├── webui/
 │   ├── app.py                         # Flask Web 服务
 │   └── templates/
@@ -128,9 +155,11 @@ pip install -r requirements.txt
 - flask - Web 框架
 - latex2mathml - LaTeX 公式转换
 
-### 第五步：安装 Calibre 和 Kindle Previewer 3（KFX 转换必需）
+### 第五步：安装 Calibre 和 Kindle Previewer 3（仅 KFX 格式需要）
 
-如需将 Markdown 转换为 KFX 格式，**必须同时安装以下两个软件**：
+> **注意**：如果您只使用 EPUB 格式（适用于国产墨水屏阅读器），可以跳过此步骤。
+
+如需将 Markdown 转换为 KFX 格式，**必须同时安装以下软件**：
 
 #### 5.1 安装 Calibre
 
@@ -181,6 +210,20 @@ playwright install chromium
 
 ---
 
+## 配置说明
+
+编辑 `src/config.py` 可以自定义以下配置：
+
+```python
+# 阅读器导入路径（将此路径设为本地文件夹，然后手动复制到阅读器）
+KINDLE_ARTICLE_PATH = Path('D:/kindle_import')
+
+# 是否启用 EPUB 支持（True: 同时生成 KFX 和 EPUB；False: 仅生成 KFX）
+ENABLE_EPUB_SUPPORT = True
+```
+
+---
+
 ## 使用指南
 
 ### 方式一：Web 界面（推荐新手）
@@ -212,6 +255,17 @@ python webui/app.py
 2. **文件上传**：上传本地 Markdown 文件进行转换
 3. **格式转换**：将 Markdown 转换为 KFX/EPUB 格式
 4. **批量处理**：支持批量下载和转换
+5. **推送管理**：支持推送 KFX 或 EPUB 到阅读器
+
+**格式选择建议：**
+
+| 设备类型 | 推荐格式 |
+|---------|---------|
+| Kindle 系列 | KFX |
+| 文石 Boox | EPUB |
+| 掌阅 iReader | EPUB |
+| 墨案 | EPUB |
+| 其他国产阅读器 | EPUB |
 
 ---
 
@@ -356,9 +410,9 @@ python "src/downloader/arxiv2markdown.py" https://arxiv.org/html/2602.02276v1 -t
 
 ---
 
-#### 4. Markdown 转 KFX (md2kfx.py)
+#### 4. Markdown 转 KFX/EPUB (md2kfx.py)
 
-将 Markdown 文件转换为 Kindle KFX 格式。
+将 Markdown 文件转换为 KFX/EPUB 格式。
 
 **基本用法：**
 
@@ -372,7 +426,7 @@ python src/md2kfx.py input.md -o output.kfx -a "作者名"
 |------|------|
 | `input` | 输入的 Markdown 文件路径 |
 | `-o, --output` | 输出文件路径（可选，默认与输入同名） |
-| `-a, --author` | 作者名称（可选，默认 "Kindle User"） |
+| `-a, --author` | 作者名称（可选，默认 "Unknown"） |
 | `--skip-mathml` | 跳过 MathML 转换（提高 KFX 兼容性） |
 
 **示例：**
@@ -395,6 +449,7 @@ python src/md2kfx.py article.md --skip-mathml
 - 数学公式支持（LaTeX/MathML）
 - 自动生成目录
 - 图片格式优化（GIF/WebP 转 PNG）
+- 同时输出 KFX 和 EPUB 格式
 
 ---
 
@@ -461,6 +516,8 @@ A: 确保 KFX 转换所需的三个组件都已正确安装：
 
 如果仍有问题，尝试使用 `--skip-mathml` 参数跳过数学公式转换。
 
+**或者使用 EPUB 格式**：如果您使用的是国产墨水屏阅读器，可以直接使用 EPUB 格式，无需安装上述组件。
+
 ### Q: 浏览器模式报错？
 
 A: 安装 Playwright：
@@ -476,6 +533,14 @@ A: 确保终端编码为 UTF-8：
 ```bash
 chcp 65001
 ```
+
+### Q: 国产阅读器如何导入？
+
+A:
+1. 将阅读器通过 USB 连接到电脑
+2. 在阅读器上选择"文件传输"模式
+3. 将转换好的 EPUB 文件复制到阅读器的书籍目录（通常是 `Books` 或 `Documents` 文件夹）
+4. 断开连接后，在阅读器上刷新书库即可看到新书籍
 
 ---
 

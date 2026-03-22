@@ -26,7 +26,8 @@ from src.config import (
     KINDLE_ARTICLE_PATH, ALLOWED_EXTENSIONS,
     PORT,
     MAX_WORKERS, TASK_MAX_AGE_HOURS,
-    ZHIHU_COOKIE_FILE, WECHAT_COOKIE_FILE
+    ZHIHU_COOKIE_FILE, WECHAT_COOKIE_FILE,
+    load_user_config, save_user_config
 )
 from src.md2kfx import MarkdownToKFX
 
@@ -175,9 +176,9 @@ def delete_file_from_db(file_id):
 
 def format_name(name: str, max_length: int = 100) -> str:
     """
-    格式化文件名为 Kindle 兼容格式
+    格式化文件名为墨水屏阅读器兼容格式
 
-    Kindle 文件系统（FAT32/exFAT）不支持以下字符：
+    墨水屏阅读器文件系统（FAT32/exFAT）不支持以下字符：
     < > : " / \ | ? *
     同时处理：
     - 移除不可见字符
@@ -198,7 +199,7 @@ def format_name(name: str, max_length: int = 100) -> str:
     # 移除零宽字符和不可见字符
     name = re.sub(r'[\u200b-\u200f\u2028-\u202f\ufeff]', '', name)
 
-    # 替换 Windows/Kindle 不支持的字符为下划线
+    # 替换 Windows/墨水屏阅读器不支持的字符为下划线
     # 不支持的字符: < > : " / \ | ? *
     name = re.sub(r'[<>:"/\\|?*]', '_', name)
 
@@ -230,11 +231,11 @@ def format_name(name: str, max_length: int = 100) -> str:
 
 
 def check_kindle_connected():
-    """检查 Kindle 是否连接"""
+    """检查墨水屏阅读器是否连接"""
     return KINDLE_ARTICLE_PATH.exists()
 
 def get_kindle_files():
-    """获取 Kindle 中已有的 KFX/EPUB 文件列表（不带扩展名）"""
+    """获取墨水屏阅读器中已有的 KFX/EPUB 文件列表（不带扩展名）"""
     if not check_kindle_connected():
         return set()
 
@@ -244,20 +245,20 @@ def get_kindle_files():
         for ext in ['*.kfx', '*.epub']:
             for f in KINDLE_ARTICLE_PATH.glob(ext):
                 kindle_files.add(f.stem)
-        print(f"Kindle 中的文件：{kindle_files}")
+        print(f"墨水屏阅读器中的文件：{kindle_files}")
     except Exception as e:
-        print(f"获取 Kindle 文件列表失败：{e}")
+        print(f"获取墨水屏阅读器文件列表失败：{e}")
     return kindle_files
 
 def copy_to_kindle(file_id, file_type='kfx'):
-    """将 KFX 或 EPUB 文件复制到 Kindle
+    """将 KFX 或 EPUB 文件复制到墨水屏阅读器
 
     Args:
         file_id: 文件ID
         file_type: 'kfx' 或 'epub'，指定推送的文件类型
     """
     if not check_kindle_connected():
-        return False, "Kindle 未连接"
+        return False, "墨水屏阅读器未连接"
 
     info = get_file_info(file_id)
     if not info:
@@ -268,7 +269,7 @@ def copy_to_kindle(file_id, file_type='kfx'):
     if not original_name:
         return False, "文件名无效"
 
-    # 格式化文件名为 Kindle 兼容格式
+    # 格式化文件名为墨水屏阅读器兼容格式
     file_name = format_name(original_name)
 
     kfx_path = OUTPUT_FOLDER / f"{file_id}.kfx"
@@ -283,7 +284,7 @@ def copy_to_kindle(file_id, file_type='kfx'):
             print(f"Copied: {kfx_path} -> {dest_kfx}")
             return True, "KFX 推送成功"
         except Exception as e:
-            print(f"Copy KFX to Kindle failed: {e}")
+            print(f"Copy KFX to device failed: {e}")
             return False, f"KFX 复制失败：{str(e)}"
     else:  # epub
         if not epub_path.exists():
@@ -294,13 +295,13 @@ def copy_to_kindle(file_id, file_type='kfx'):
             print(f"Copied: {epub_path} -> {dest_epub}")
             return True, "EPUB 推送成功"
         except Exception as e:
-            print(f"Copy EPUB to Kindle failed: {e}")
+            print(f"Copy EPUB to device failed: {e}")
             return False, f"EPUB 复制失败：{str(e)}"
 
 def delete_from_kindle(file_id):
-    """从 Kindle 删除 KFX 文件及相关 SDR 文件夹"""
+    """从墨水屏阅读器删除 KFX/EPUB 文件及相关 SDR 文件夹"""
     if not check_kindle_connected():
-        return False, "Kindle 未连接"
+        return False, "墨水屏阅读器未连接"
 
     info = get_file_info(file_id)
     if not info:
@@ -310,7 +311,7 @@ def delete_from_kindle(file_id):
     if not original_name:
         return False, "文件名无效"
 
-    # 格式化文件名为 Kindle 兼容格式（与复制时保持一致）
+    # 格式化文件名为墨水屏阅读器兼容格式（与复制时保持一致）
     file_name = format_name(original_name)
 
     try:
@@ -344,7 +345,7 @@ def delete_from_kindle(file_id):
             deleted_items.append(f"{file_name}.epub")
             print(f"Deleted: {epub_path}")
 
-        # 删除以 file_name_ 开头的 SDR 文件夹（Kindle 生成的 {书名}_{唯一 ID}.sdr 格式）
+        # 删除以 file_name_ 开头的 SDR 文件夹（阅读器生成的 {书名}_{唯一 ID}.sdr 格式）
         try:
             sdr_prefix = f"{file_name}_"
             for sdr_dir in KINDLE_ARTICLE_PATH.iterdir():
@@ -355,10 +356,10 @@ def delete_from_kindle(file_id):
         except Exception as e:
             print(f"Error scanning SDR folders: {e}")
 
-        print(f"Deleted from Kindle: {deleted_items}")
+        print(f"Deleted from device: {deleted_items}")
         return True, f"删除成功，共删除 {len(deleted_items)} 个项目"
     except Exception as e:
-        print(f"Delete from Kindle failed: {e}")
+        print(f"Delete from device failed: {e}")
         return False, f"删除失败：{str(e)}"
 
 def scan_existing_files():
@@ -403,7 +404,7 @@ def scan_existing_files():
         db['files'][file_id] = {
             'name': md_file.stem,
             'original_name': md_file.name,
-            'author': 'Kindle User',
+            'author': 'Unknown',
             'upload_time': datetime.fromtimestamp(stat.st_mtime).isoformat(),
             'convert_time': datetime.fromtimestamp(stat.st_mtime).isoformat() if (has_kfx or has_epub) else '',
             'status': 'converted' if has_kfx else ('converted_epub' if has_epub else 'uploaded')
@@ -419,7 +420,9 @@ scan_existing_files()
 def index():
     """主页"""
     db = load_database()
-    kindle_files = get_kindle_files()  # 获取 Kindle 中的文件列表
+    device_files = get_kindle_files()  # 获取墨水屏阅读器中的文件列表
+    user_config = load_user_config()
+    enable_epub = user_config.get('enable_epub_support', True)
 
     files = []
     for file_id, info in db['files'].items():
@@ -428,10 +431,10 @@ def index():
         kfx_path = OUTPUT_FOLDER / f"{file_id}.kfx"
         epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
 
-        # 检查是否已导入 Kindle（通过文件名匹配，使用 format_name 格式化）
+        # 检查是否已导入墨水屏阅读器（通过文件名匹配，使用 format_name 格式化）
         file_name = info.get('name', '')
         formatted_name = format_name(file_name)
-        is_imported = formatted_name in kindle_files
+        is_imported = formatted_name in device_files
 
         file_info = {
             'id': file_id,
@@ -449,7 +452,7 @@ def index():
 
     # 按上传时间倒序排列
     files.sort(key=lambda x: x['upload_time'], reverse=True)
-    return render_template('index.html', files=files)
+    return render_template('index.html', files=files, enable_epub=enable_epub)
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -504,6 +507,10 @@ def convert_file(file_id):
     if not md_path.exists():
         return jsonify({'error': 'Source file not found'}), 404
 
+    # 获取用户配置
+    user_config = load_user_config()
+    enable_epub = user_config.get('enable_epub_support', True)
+
     try:
         # 设置输出路径
         output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
@@ -518,8 +525,8 @@ def convert_file(file_id):
         )
         result = converter.convert()
 
-        # 同时保存 epub 文件
-        if hasattr(converter, 'epub_file') and converter.epub_file and converter.epub_file.exists():
+        # 如果启用了 EPUB 支持，同时保存 epub 文件
+        if enable_epub and hasattr(converter, 'epub_file') and converter.epub_file and converter.epub_file.exists():
             shutil.copy2(str(converter.epub_file), str(epub_output_path))
 
         # 检查输出文件
@@ -687,6 +694,10 @@ def _do_batch_convert(task_id, file_ids):
                 results.append({'id': file_id, 'status': 'error', 'message': 'Source missing'})
                 continue
 
+            # 获取用户配置
+            user_config = load_user_config()
+            enable_epub = user_config.get('enable_epub_support', True)
+
             output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
             epub_output_path = OUTPUT_FOLDER / f"{file_id}.epub"
             converter = MarkdownToKFX(
@@ -698,8 +709,8 @@ def _do_batch_convert(task_id, file_ids):
             )
             result = converter.convert()
 
-            # 同时保存 epub 文件
-            if hasattr(converter, 'epub_file') and converter.epub_file and converter.epub_file.exists():
+            # 如果启用了 EPUB 支持，同时保存 epub 文件
+            if enable_epub and hasattr(converter, 'epub_file') and converter.epub_file and converter.epub_file.exists():
                 shutil.copy2(str(converter.epub_file), str(epub_output_path))
 
             status = 'converted'
@@ -724,9 +735,9 @@ def _do_batch_convert(task_id, file_ids):
 
 @app.route('/batch_push_kindle', methods=['POST'])
 def batch_push_kindle():
-    """批量推送到 Kindle"""
+    """批量推送到墨水屏阅读器"""
     if not check_kindle_connected():
-        return jsonify({'success': False, 'error': 'Kindle 未连接'}), 400
+        return jsonify({'success': False, 'error': '墨水屏阅读器未连接'}), 400
 
     file_ids = request.json.get('ids', [])
     file_type = request.json.get('file_type', 'kfx')  # 'kfx' 或 'epub'
@@ -752,9 +763,9 @@ def batch_push_kindle():
 
 @app.route('/batch_delete_kindle', methods=['POST'])
 def batch_delete_kindle():
-    """批量从 Kindle 删除"""
+    """批量从墨水屏阅读器删除"""
     if not check_kindle_connected():
-        return jsonify({'success': False, 'error': 'Kindle 未连接'}), 400
+        return jsonify({'success': False, 'error': '墨水屏阅读器未连接'}), 400
 
     file_ids = request.json.get('ids', [])
     results = []
@@ -818,7 +829,7 @@ def preview_file(file_id):
 
 @app.route('/kindle/status')
 def kindle_status():
-    """检查 Kindle 连接状态"""
+    """检查墨水屏阅读器连接状态"""
     is_connected = check_kindle_connected()
     return jsonify({
         'connected': is_connected,
@@ -827,10 +838,10 @@ def kindle_status():
 
 @app.route('/kindle/push/<file_id>', methods=['POST'])
 def push_to_kindle(file_id):
-    """推送文件到 Kindle"""
+    """推送文件到墨水屏阅读器"""
     # 调试信息
     info = get_file_info(file_id)
-    print(f"Push to Kindle - file_id: {file_id}, name: {info.get('name') if info else 'N/A'}")
+    print(f"Push to device - file_id: {file_id}, name: {info.get('name') if info else 'N/A'}")
 
     success, message = copy_to_kindle(file_id)
     if success:
@@ -839,7 +850,7 @@ def push_to_kindle(file_id):
 
 @app.route('/kindle/delete/<file_id>', methods=['POST'])
 def delete_from_kindle_api(file_id):
-    """从 Kindle 删除文件"""
+    """从墨水屏阅读器删除文件"""
     success, message = delete_from_kindle(file_id)
     if success:
         return jsonify({'success': True, 'message': message})
@@ -847,8 +858,29 @@ def delete_from_kindle_api(file_id):
 
 @app.route('/kindle/refresh', methods=['POST'])
 def refresh_kindle_status():
-    """刷新 Kindle 状态（用于前端轮询后手动刷新）"""
+    """刷新墨水屏阅读器状态（用于前端轮询后手动刷新）"""
     return jsonify({'success': True})
+
+
+# ==================== 用户配置 API ====================
+
+@app.route('/config')
+def get_config():
+    """获取用户配置"""
+    user_config = load_user_config()
+    return jsonify(user_config)
+
+@app.route('/config', methods=['POST'])
+def update_config():
+    """更新用户配置"""
+    data = request.json
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    user_config = load_user_config()
+    user_config.update(data)
+    save_user_config(user_config)
+    return jsonify({'success': True, 'config': user_config})
 
 
 # ==================== 知乎下载 API ====================
@@ -1077,7 +1109,9 @@ def _do_zhihu_download(task_id, url, custom_title, custom_author):
             convert_result = kfx_converter.convert()
 
             # 同时保存 epub 文件
-            if hasattr(kfx_converter, 'epub_file') and kfx_converter.epub_file and kfx_converter.epub_file.exists():
+            user_config = load_user_config()
+            enable_epub = user_config.get('enable_epub_support', True)
+            if enable_epub and hasattr(kfx_converter, 'epub_file') and kfx_converter.epub_file and kfx_converter.epub_file.exists():
                 shutil.copy2(str(kfx_converter.epub_file), str(epub_output_path))
 
             status = 'converted'
@@ -1363,7 +1397,9 @@ def _do_wechat_download(task_id, url, custom_title, custom_author):
             convert_result = kfx_converter.convert()
 
             # 同时保存 epub 文件
-            if hasattr(kfx_converter, 'epub_file') and kfx_converter.epub_file and kfx_converter.epub_file.exists():
+            user_config = load_user_config()
+            enable_epub = user_config.get('enable_epub_support', True)
+            if enable_epub and hasattr(kfx_converter, 'epub_file') and kfx_converter.epub_file and kfx_converter.epub_file.exists():
                 shutil.copy2(str(kfx_converter.epub_file), str(epub_output_path))
 
             status = 'converted'
@@ -1581,7 +1617,9 @@ def _do_arxiv_download(task_id, url, custom_title, custom_author):
             convert_result = kfx_converter.convert()
 
             # 同时保存 epub 文件
-            if hasattr(kfx_converter, 'epub_file') and kfx_converter.epub_file and kfx_converter.epub_file.exists():
+            user_config = load_user_config()
+            enable_epub = user_config.get('enable_epub_support', True)
+            if enable_epub and hasattr(kfx_converter, 'epub_file') and kfx_converter.epub_file and kfx_converter.epub_file.exists():
                 shutil.copy2(str(kfx_converter.epub_file), str(epub_output_path))
 
             status = 'converted'
@@ -1625,7 +1663,7 @@ if __name__ == '__main__':
     print(f"Upload folder: {UPLOAD_FOLDER}")
     print(f"Output folder: {OUTPUT_FOLDER}")
     print(f"Database: {DATABASE_FILE}")
-    print(f"Kindle path: {KINDLE_ARTICLE_PATH}")
+    print(f"墨水屏阅读器路径: {KINDLE_ARTICLE_PATH}")
     print("=" * 50)
     app.run(debug=True, host='0.0.0.0', port=PORT)
 
