@@ -856,6 +856,7 @@ class MarkdownToKFX:
             print(f"Processing: {self.md_file.name}")
             html_file = self.markdown_to_html()
             epub_file = self.create_epub(html_file)
+            self.epub_file = epub_file  # 保存 epub 文件路径供外部使用
             final_file = self.epub_to_kfx(epub_file)
             print(f"Finished! Output: {final_file}")
             return final_file

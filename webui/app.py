@@ -249,8 +249,13 @@ def get_kindle_files():
         print(f"获取 Kindle 文件列表失败：{e}")
     return kindle_files
 
-def copy_to_kindle(file_id):
-    """将 KFX 文件及相关 SDR 文件夹复制到 Kindle"""
+def copy_to_kindle(file_id, file_type='kfx'):
+    """将 KFX 或 EPUB 文件复制到 Kindle
+
+    Args:
+        file_id: 文件ID
+        file_type: 'kfx' 或 'epub'，指定推送的文件类型
+    """
     if not check_kindle_connected():
         return False, "Kindle 未连接"
 
@@ -269,33 +274,28 @@ def copy_to_kindle(file_id):
     kfx_path = OUTPUT_FOLDER / f"{file_id}.kfx"
     epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
 
-    if not kfx_path.exists() and not epub_path.exists():
-        return False, "KFX/EPUB 文件不存在"
-
-    try:
-        # 复制 KFX 文件（优先）或 EPUB 文件
-        if kfx_path.exists():
+    if file_type == 'kfx':
+        if not kfx_path.exists():
+            return False, "KFX 文件不存在"
+        try:
             dest_kfx = KINDLE_ARTICLE_PATH / f"{file_name}.kfx"
             shutil.copy2(kfx_path, dest_kfx)
             print(f"Copied: {kfx_path} -> {dest_kfx}")
-        else:
+            return True, "KFX 推送成功"
+        except Exception as e:
+            print(f"Copy KFX to Kindle failed: {e}")
+            return False, f"KFX 复制失败：{str(e)}"
+    else:  # epub
+        if not epub_path.exists():
+            return False, "EPUB 文件不存在"
+        try:
             dest_epub = KINDLE_ARTICLE_PATH / f"{file_name}.epub"
             shutil.copy2(epub_path, dest_epub)
             print(f"Copied: {epub_path} -> {dest_epub}")
-
-        # 复制 SDR 文件夹（如果存在）
-        sdr_path = OUTPUT_FOLDER / f"{file_id}.sdr"
-        if sdr_path.exists() and sdr_path.is_dir():
-            dest_sdr = KINDLE_ARTICLE_PATH / f"{file_name}.sdr"
-            if dest_sdr.exists():
-                shutil.rmtree(dest_sdr)
-            shutil.copytree(sdr_path, dest_sdr)
-            print(f"Copied SDR: {sdr_path} -> {dest_sdr}")
-
-        return True, "推送成功"
-    except Exception as e:
-        print(f"Copy to Kindle failed: {e}")
-        return False, f"复制失败：{str(e)}"
+            return True, "EPUB 推送成功"
+        except Exception as e:
+            print(f"Copy EPUB to Kindle failed: {e}")
+            return False, f"EPUB 复制失败：{str(e)}"
 
 def delete_from_kindle(file_id):
     """从 Kindle 删除 KFX 文件及相关 SDR 文件夹"""
@@ -507,6 +507,7 @@ def convert_file(file_id):
     try:
         # 设置输出路径
         output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+        epub_output_path = OUTPUT_FOLDER / f"{file_id}.epub"
 
         # 执行转换
         converter = MarkdownToKFX(
@@ -517,13 +518,16 @@ def convert_file(file_id):
         )
         result = converter.convert()
 
+        # 同时保存 epub 文件
+        if hasattr(converter, 'epub_file') and converter.epub_file and converter.epub_file.exists():
+            shutil.copy2(str(converter.epub_file), str(epub_output_path))
+
         # 检查输出文件
         status = 'converted'
         if result.suffix == '.epub':
-            # 如果是 epub，重命名
-            epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
-            if result != epub_path:
-                shutil.move(str(result), str(epub_path))
+            # 如果是 epub（kfx 转换失败），重命名
+            if result != epub_output_path:
+                shutil.move(str(result), str(epub_output_path))
             status = 'converted_epub'
 
         # 更新数据库
@@ -684,6 +688,7 @@ def _do_batch_convert(task_id, file_ids):
                 continue
 
             output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+            epub_output_path = OUTPUT_FOLDER / f"{file_id}.epub"
             converter = MarkdownToKFX(
                 markdown_file=str(md_path),
                 output_file=str(output_path),
@@ -693,11 +698,14 @@ def _do_batch_convert(task_id, file_ids):
             )
             result = converter.convert()
 
+            # 同时保存 epub 文件
+            if hasattr(converter, 'epub_file') and converter.epub_file and converter.epub_file.exists():
+                shutil.copy2(str(converter.epub_file), str(epub_output_path))
+
             status = 'converted'
             if result.suffix == '.epub':
-                epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
-                if result != epub_path:
-                    shutil.move(str(result), str(epub_path))
+                if result != epub_output_path:
+                    shutil.move(str(result), str(epub_output_path))
                 status = 'converted_epub'
 
             info['status'] = status
@@ -721,11 +729,12 @@ def batch_push_kindle():
         return jsonify({'success': False, 'error': 'Kindle 未连接'}), 400
 
     file_ids = request.json.get('ids', [])
+    file_type = request.json.get('file_type', 'kfx')  # 'kfx' 或 'epub'
     results = []
 
     for file_id in file_ids:
         try:
-            success, message = copy_to_kindle(file_id)
+            success, message = copy_to_kindle(file_id, file_type)
             if success:
                 results.append({'id': file_id, 'status': 'success', 'message': message})
             else:
@@ -1058,6 +1067,7 @@ def _do_zhihu_download(task_id, url, custom_title, custom_author):
         task_manager.update_task(task_id, progress=60, message='正在转换为 KFX...')
         try:
             output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+            epub_output_path = OUTPUT_FOLDER / f"{file_id}.epub"
             kfx_converter = MarkdownToKFX(
                 markdown_file=str(md_path),
                 output_file=str(output_path),
@@ -1066,11 +1076,14 @@ def _do_zhihu_download(task_id, url, custom_title, custom_author):
             )
             convert_result = kfx_converter.convert()
 
+            # 同时保存 epub 文件
+            if hasattr(kfx_converter, 'epub_file') and kfx_converter.epub_file and kfx_converter.epub_file.exists():
+                shutil.copy2(str(kfx_converter.epub_file), str(epub_output_path))
+
             status = 'converted'
             if convert_result.suffix == '.epub':
-                epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
-                if convert_result != epub_path:
-                    shutil.move(str(convert_result), str(epub_path))
+                if convert_result != epub_output_path:
+                    shutil.move(str(convert_result), str(epub_output_path))
                 status = 'converted_epub'
 
             file_info['status'] = status
@@ -1340,6 +1353,7 @@ def _do_wechat_download(task_id, url, custom_title, custom_author):
         task_manager.update_task(task_id, progress=60, message='正在转换为 KFX...')
         try:
             output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+            epub_output_path = OUTPUT_FOLDER / f"{file_id}.epub"
             kfx_converter = MarkdownToKFX(
                 markdown_file=str(md_path),
                 output_file=str(output_path),
@@ -1348,11 +1362,14 @@ def _do_wechat_download(task_id, url, custom_title, custom_author):
             )
             convert_result = kfx_converter.convert()
 
+            # 同时保存 epub 文件
+            if hasattr(kfx_converter, 'epub_file') and kfx_converter.epub_file and kfx_converter.epub_file.exists():
+                shutil.copy2(str(kfx_converter.epub_file), str(epub_output_path))
+
             status = 'converted'
             if convert_result.suffix == '.epub':
-                epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
-                if convert_result != epub_path:
-                    shutil.move(str(convert_result), str(epub_path))
+                if convert_result != epub_output_path:
+                    shutil.move(str(convert_result), str(epub_output_path))
                 status = 'converted_epub'
 
             file_info['status'] = status
@@ -1554,6 +1571,7 @@ def _do_arxiv_download(task_id, url, custom_title, custom_author):
         task_manager.update_task(task_id, progress=60, message='正在转换为 KFX...')
         try:
             output_path = OUTPUT_FOLDER / f"{file_id}.kfx"
+            epub_output_path = OUTPUT_FOLDER / f"{file_id}.epub"
             kfx_converter = MarkdownToKFX(
                 markdown_file=str(md_path),
                 output_file=str(output_path),
@@ -1562,11 +1580,14 @@ def _do_arxiv_download(task_id, url, custom_title, custom_author):
             )
             convert_result = kfx_converter.convert()
 
+            # 同时保存 epub 文件
+            if hasattr(kfx_converter, 'epub_file') and kfx_converter.epub_file and kfx_converter.epub_file.exists():
+                shutil.copy2(str(kfx_converter.epub_file), str(epub_output_path))
+
             status = 'converted'
             if convert_result.suffix == '.epub':
-                epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
-                if convert_result != epub_path:
-                    shutil.move(str(convert_result), str(epub_path))
+                if convert_result != epub_output_path:
+                    shutil.move(str(convert_result), str(epub_output_path))
                 status = 'converted_epub'
 
             file_info['status'] = status

@@ -745,8 +745,11 @@
                 <button class="btn btn-sm btn-convert text-white ms-3" id="batchConvertBtn">
                     <i class="bi bi-arrow-repeat"></i> 批量转换
                 </button>
-                <button class="btn btn-sm btn-send-kindle" id="batchPushKindleBtn">
-                    <i class="bi bi-send"></i> 批量推送 Kindle
+                <button class="btn btn-sm btn-send-kindle" id="batchPushKfxBtn">
+                    <i class="bi bi-send"></i> 推送 KFX 到 Kindle
+                </button>
+                <button class="btn btn-sm" id="batchPushEpubBtn" style="background: #fd7e14; border-color: #fd7e14; color: white;">
+                    <i class="bi bi-send"></i> 推送 EPUB 到 Kindle
                 </button>
                 <button class="btn btn-sm btn-delete-kindle" id="batchDeleteKindleBtn">
                     <i class="bi bi-eject"></i> 批量移除 Kindle
@@ -1408,8 +1411,8 @@
             }
         });
 
-        // 批量推送 Kindle
-        document.getElementById('batchPushKindleBtn').addEventListener('click', async () => {
+        // 批量推送 KFX 到 Kindle
+        document.getElementById('batchPushKfxBtn').addEventListener('click', async () => {
             const checked = document.querySelectorAll('.file-checkbox:checked');
             if (checked.length === 0) return;
 
@@ -1418,7 +1421,7 @@
                 return;
             }
 
-            if (!confirm(`确定要推送选中的 ${checked.length} 个文件到 Kindle 吗？`)) return;
+            if (!confirm(`确定要推送选中的 ${checked.length} 个 KFX 文件到 Kindle 吗？`)) return;
 
             showLoading();
             const ids = Array.from(checked).map(cb => cb.dataset.id);
@@ -1426,19 +1429,53 @@
                 const res = await fetch('/batch_push_kindle', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids })
+                    body: JSON.stringify({ ids, file_type: 'kfx' })
                 });
                 const data = await res.json();
                 hideLoading();
                 if (data.success) {
-                    showToast(`批量推送完成：${data.success_count}/${data.total} 成功`, 'success');
+                    showToast(`KFX 推送完成：${data.success_count}/${data.total} 成功`, 'success');
                     setTimeout(() => location.reload(), 500);
                 } else {
-                    showToast('批量推送失败', 'error');
+                    showToast('KFX 推送失败', 'error');
                 }
             } catch (err) {
                 hideLoading();
-                showToast('批量推送失败：' + err.message, 'error');
+                showToast('KFX 推送失败：' + err.message, 'error');
+            }
+        });
+
+        // 批量推送 EPUB 到 Kindle
+        document.getElementById('batchPushEpubBtn').addEventListener('click', async () => {
+            const checked = document.querySelectorAll('.file-checkbox:checked');
+            if (checked.length === 0) return;
+
+            if (!kindleConnected) {
+                showToast('Kindle 未连接，请先插入 Kindle', 'error');
+                return;
+            }
+
+            if (!confirm(`确定要推送选中的 ${checked.length} 个 EPUB 文件到 Kindle 吗？`)) return;
+
+            showLoading();
+            const ids = Array.from(checked).map(cb => cb.dataset.id);
+            try {
+                const res = await fetch('/batch_push_kindle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids, file_type: 'epub' })
+                });
+                const data = await res.json();
+                hideLoading();
+                if (data.success) {
+                    showToast(`EPUB 推送完成：${data.success_count}/${data.total} 成功`, 'success');
+                    setTimeout(() => location.reload(), 500);
+                } else {
+                    showToast('EPUB 推送失败', 'error');
+                }
+            } catch (err) {
+                hideLoading();
+                showToast('EPUB 推送失败：' + err.message, 'error');
             }
         });
 
