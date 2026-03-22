@@ -19,7 +19,15 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 # 添加 src 目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
+from src.config import (
+    BASE_DIR, UPLOAD_FOLDER, OUTPUT_FOLDER, DATABASE_FILE,
+    KINDLE_ARTICLE_PATH, ALLOWED_EXTENSIONS,
+    PORT,
+    MAX_WORKERS, TASK_MAX_AGE_HOURS,
+    ZHIHU_COOKIE_FILE, WECHAT_COOKIE_FILE
+)
 from src.md2kfx import MarkdownToKFX
 
 # 知乎下载器导入
@@ -57,7 +65,7 @@ class TaskManager:
     def __init__(self):
         self.tasks = {}  # task_id -> task_info
         self.lock = threading.Lock()
-        self.executor = ThreadPoolExecutor(max_workers=3)  # 最多3个并发任务
+        self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
     def create_task(self, task_type, params):
         """创建新任务"""
@@ -108,8 +116,10 @@ class TaskManager:
 
         self.executor.submit(wrapper)
 
-    def cleanup_old_tasks(self, max_age_hours=24):
+    def cleanup_old_tasks(self, max_age_hours=None):
         """清理旧任务"""
+        if max_age_hours is None:
+            max_age_hours = TASK_MAX_AGE_HOURS
         cutoff = datetime.now().timestamp() - max_age_hours * 3600
         with self.lock:
             to_delete = []
@@ -124,21 +134,9 @@ class TaskManager:
 # 全局任务管理器
 task_manager = TaskManager()
 
-# 配置
-BASE_DIR = Path(__file__).parent.parent
-UPLOAD_FOLDER = BASE_DIR / 'uploads'
-OUTPUT_FOLDER = BASE_DIR / 'outputs'
-DATABASE_FILE = BASE_DIR / 'database.json'
-
-# Kindle 配置
-KINDLE_ARTICLE_PATH = Path("E:/documents/Downloads/Items01/article")
-
 # 确保目录存在
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 OUTPUT_FOLDER.mkdir(exist_ok=True)
-
-# 允许的文件扩展名
-ALLOWED_EXTENSIONS = {'md', 'markdown'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -175,6 +173,62 @@ def delete_file_from_db(file_id):
         del db['files'][file_id]
         save_database(db)
 
+def format_name(name: str, max_length: int = 100) -> str:
+    """
+    格式化文件名为 Kindle 兼容格式
+
+    Kindle 文件系统（FAT32/exFAT）不支持以下字符：
+    < > : " / \ | ? *
+    同时处理：
+    - 移除不可见字符
+    - 合并多个空格/下划线
+    - 限制文件名长度
+    - 处理以点开头或结尾的情况
+
+    Args:
+        name: 原始文件名
+        max_length: 最大长度限制（默认100字符）
+
+    Returns:
+        格式化后的文件名
+    """
+    if not name:
+        return "Untitled"
+
+    # 移除零宽字符和不可见字符
+    name = re.sub(r'[\u200b-\u200f\u2028-\u202f\ufeff]', '', name)
+
+    # 替换 Windows/Kindle 不支持的字符为下划线
+    # 不支持的字符: < > : " / \ | ? *
+    name = re.sub(r'[<>:"/\\|?*]', '_', name)
+
+    # 替换其他特殊字符为下划线（保留常见标点）
+    # 保留：中文、英文、数字、空格、下划线、连字符、括号、逗号、句号
+    # 替换：分号、感叹号、问号等
+    name = re.sub(r'[;！？]', '_', name)
+
+    # 合并多个连续的下划线或空格
+    name = re.sub(r'_{2,}', '_', name)
+    name = re.sub(r'\s{2,}', ' ', name)
+
+    # 移除首尾的空格、下划线、点
+    name = name.strip(' _.')
+
+    # 如果文件名以点开头，添加前缀（避免隐藏文件问题）
+    if name.startswith('.'):
+        name = 'file_' + name
+
+    # 限制长度（保留扩展名的空间，这里只处理文件名主体）
+    if len(name) > max_length:
+        name = name[:max_length].rstrip(' _.')
+
+    # 如果处理后为空，使用默认名称
+    if not name:
+        return "Untitled"
+
+    return name
+
+
 def check_kindle_connected():
     """检查 Kindle 是否连接"""
     return KINDLE_ARTICLE_PATH.exists()
@@ -205,9 +259,12 @@ def copy_to_kindle(file_id):
         return False, "文件不存在"
 
     # 使用数据库记录的文件名（original_name 去掉扩展名）
-    file_name = info.get('name', '')
-    if not file_name:
+    original_name = info.get('name', '')
+    if not original_name:
         return False, "文件名无效"
+
+    # 格式化文件名为 Kindle 兼容格式
+    file_name = format_name(original_name)
 
     kfx_path = OUTPUT_FOLDER / f"{file_id}.kfx"
     epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
@@ -249,9 +306,12 @@ def delete_from_kindle(file_id):
     if not info:
         return False, "文件不存在"
 
-    file_name = info.get('name', '')
-    if not file_name:
+    original_name = info.get('name', '')
+    if not original_name:
         return False, "文件名无效"
+
+    # 格式化文件名为 Kindle 兼容格式（与复制时保持一致）
+    file_name = format_name(original_name)
 
     try:
         deleted_items = []
@@ -368,9 +428,10 @@ def index():
         kfx_path = OUTPUT_FOLDER / f"{file_id}.kfx"
         epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
 
-        # 检查是否已导入 Kindle（通过文件名匹配）
+        # 检查是否已导入 Kindle（通过文件名匹配，使用 format_name 格式化）
         file_name = info.get('name', '')
-        is_imported = file_name in kindle_files
+        formatted_name = format_name(file_name)
+        is_imported = formatted_name in kindle_files
 
         file_info = {
             'id': file_id,
@@ -782,9 +843,6 @@ def refresh_kindle_status():
 
 
 # ==================== 知乎下载 API ====================
-
-ZHIHU_COOKIE_FILE = BASE_DIR / 'config' / 'zhihu_cookies.json'
-WECHAT_COOKIE_FILE = BASE_DIR / 'config' / 'wechat_cookies.json'
 
 @app.route('/zhihu/status')
 def zhihu_status():
@@ -1548,7 +1606,7 @@ if __name__ == '__main__':
     print(f"Database: {DATABASE_FILE}")
     print(f"Kindle path: {KINDLE_ARTICLE_PATH}")
     print("=" * 50)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=PORT)
 
 
 # ==================== 后台任务 API ====================

@@ -115,6 +115,9 @@ class ArxivToMarkdown:
         if not html:
             return False, "", ""
 
+        # 解析 URL 获取 base_url 用于处理图片等相对路径
+        self.base_url = self._get_base_url(url)
+
         # 解析 HTML
         soup = BeautifulSoup(html, 'html.parser')
 
@@ -130,6 +133,9 @@ class ArxivToMarkdown:
         # 构建 Markdown
         markdown = self._build_markdown(title, authors, abstract, body_content, url, article_id)
 
+        # 清理零宽字符和不可见字符
+        markdown = self._clean_invisible_chars(markdown)
+
         # 保存文件
         safe_title = re.sub(r'[<>:"/\\|?*]', '', title)[:50]
         filename = f"{safe_title}_{article_id}.md"
@@ -141,9 +147,44 @@ class ArxivToMarkdown:
         print(f"[Success] Saved to: {filepath}")
         return True, markdown, str(filepath)
 
+    def _get_base_url(self, url: str) -> str:
+        """获取 arXiv HTML 页面的 base URL，用于拼接图片等相对路径"""
+        # 标准化 URL
+        if not url.startswith('http'):
+            url = 'https://' + url
+
+        # 确保是 arxiv.org/html/ 格式
+        if 'arxiv.org/abs/' in url:
+            url = url.replace('arxiv.org/abs/', 'arxiv.org/html/')
+
+        # arXiv HTML 页面上的图片 src 已经包含文章 ID（如 2603.12056v2/x2.png）
+        # 所以 base_url 只需要是 https://arxiv.org/html
+        # 这样拼接后才是正确的 https://arxiv.org/html/2603.12056v2/x2.png
+        return "https://arxiv.org/html"
+
+    def _make_absolute_url(self, src: str) -> str:
+        """将相对路径转换为绝对 URL"""
+        if not src:
+            return src
+
+        # 已经是绝对路径
+        if src.startswith('http://') or src.startswith('https://'):
+            return src
+
+        # 处理 data: URL
+        if src.startswith('data:'):
+            return src
+
+        # 使用 base_url 拼接相对路径
+        if hasattr(self, 'base_url') and self.base_url:
+            # 移除开头的 ./
+            src = src.lstrip('./')
+            return f"{self.base_url}/{src}"
+
+        return src
+
     def _extract_title(self, soup: BeautifulSoup) -> str:
         """提取标题"""
-        # 尝试多种选择器
         selectors = [
             'h1.ltx_title',
             'h1.title',
@@ -267,7 +308,12 @@ class ArxivToMarkdown:
 
         # 数学公式
         if tag == 'math' or 'ltx_math' in element.get('class', []):
-            return self._convert_math(element)
+            # 检查是否是行内公式
+            display = element.get('display', '')
+            is_inline = display != 'block' and not any(
+                c in str(element.get('class', [])) for c in ['ltx_math_block', 'ltx_equation']
+            )
+            return self._convert_math(element, inline=is_inline)
 
         # 行内公式
         if tag == 'span' and 'ltx_math' in element.get('class', []):
@@ -316,6 +362,8 @@ class ArxivToMarkdown:
         if tag == 'img':
             src = element.get('src', '')
             alt = element.get('alt', 'image')
+            # 将相对路径转换为绝对 URL
+            src = self._make_absolute_url(src)
             return f"![{alt}]({src})"
 
         # 强调
@@ -433,14 +481,19 @@ class ArxivToMarkdown:
         return text
 
     def _convert_table(self, table) -> str:
-        """转换表格"""
+        """转换表格，特殊处理 arXiv 公式表格"""
+        # 检测是否是 arXiv 公式表格（带编号的公式行）
+        if self._is_equation_table(table):
+            return self._convert_equation_table(table)
+
         rows = []
         header_row = None
 
         # 处理表头
         thead = table.find('thead')
         if thead:
-            headers = [th.get_text().strip() for th in thead.find_all(['th', 'td'])]
+            headers = [self._convert_cell_content(th) for th in thead.find_all(['th', 'td'])]
+            headers = [h.strip() for h in headers if h.strip()]
             if headers:
                 header_row = '| ' + ' | '.join(headers) + ' |'
                 rows.append(header_row)
@@ -449,7 +502,11 @@ class ArxivToMarkdown:
         # 处理表体
         tbody = table.find('tbody') or table
         for tr in tbody.find_all('tr'):
-            cells = [td.get_text().strip().replace('\n', ' ') for td in tr.find_all(['td', 'th'])]
+            # 跳过公式行（已在上面处理）
+            if tr.get('class') and 'ltx_equation' in ' '.join(tr.get('class', [])):
+                continue
+            cells = [self._convert_cell_content(td) for td in tr.find_all(['td', 'th'])]
+            cells = [c.strip().replace('\n', ' ') for c in cells if c.strip()]
             if cells:
                 row = '| ' + ' | '.join(cells) + ' |'
                 rows.append(row)
@@ -465,11 +522,100 @@ class ArxivToMarkdown:
 
         return '\n' + '\n'.join(rows) + '\n'
 
+    def _is_equation_table(self, table) -> bool:
+        """检测是否是 arXiv 公式表格"""
+        # 检查 table 或其子元素是否有 ltx_equation 类
+        classes = table.get('class', [])
+        if any('ltx_equationgroup' in c or 'ltx_eqn_table' in c for c in classes):
+            return True
+
+        # 检查 tbody 或 tr 是否有 ltx_equation 类
+        for tr in table.find_all('tr'):
+            tr_classes = tr.get('class', [])
+            if any('ltx_equation' in c for c in tr_classes):
+                return True
+
+        return False
+
+    def _convert_equation_table(self, table) -> str:
+        """转换 arXiv 公式表格为带编号的公式"""
+        results = []
+
+        for tr in table.find_all('tr'):
+            tr_classes = tr.get('class', [])
+            if not any('ltx_equation' in c for c in tr_classes):
+                continue
+
+            # 提取公式内容
+            math_elem = tr.find('math')
+            if not math_elem:
+                continue
+
+            # 获取 LaTeX
+            latex = math_elem.get('alttext', '')
+            if not latex:
+                annotation = math_elem.find('annotation')
+                if annotation and annotation.get('encoding') == 'application/x-tex':
+                    latex = annotation.get_text()
+
+            if not latex:
+                latex = math_elem.get_text().strip()
+
+            # 提取编号
+            eq_number = ''
+            tag_span = tr.find('span', class_='ltx_tag')
+            if tag_span:
+                eq_number = tag_span.get_text().strip()
+
+            # 输出公式
+            if eq_number:
+                results.append(f"$$\n{latex}\n$$ {{#eq-{eq_number.strip('()')}}}\n")
+            else:
+                results.append(f"$$\n{latex}\n$$\n")
+
+        return '\n'.join(results)
+
+    def _convert_cell_content(self, cell) -> str:
+        """转换单元格内容，正确处理数学公式"""
+        parts = []
+        for child in cell.children:
+            if isinstance(child, NavigableString):
+                parts.append(str(child))
+            elif child.name == 'math':
+                # 行内公式
+                latex = child.get('alttext', '')
+                if not latex:
+                    annotation = child.find('annotation')
+                    if annotation and annotation.get('encoding') == 'application/x-tex':
+                        latex = annotation.get_text()
+                if latex:
+                    parts.append(f"${latex}$")
+                else:
+                    parts.append(child.get_text())
+            else:
+                parts.append(child.get_text())
+
+        return ''.join(parts)
+
     def _clean_text(self, text: str) -> str:
         """清理文本"""
+        # 移除零宽字符和其他不可见字符
+        # U+200B 零宽空格, U+200C 零宽非连接符, U+200D 零宽连接符
+        # U+FEFF BOM, U+2060 字连接符, U+00A0 不间断空格
+        text = re.sub(r'[\u200b\u200c\u200d\ufeff\u2060\u00a0]', '', text)
         # 移除多余空白
         text = re.sub(r'\s+', ' ', text)
         text = text.strip()
+        return text
+
+    def _clean_invisible_chars(self, text: str) -> str:
+        """清理所有不可见字符（用于最终输出）"""
+        # 零宽字符
+        text = re.sub(r'[\u200b\u200c\u200d\ufeff\u2060]', '', text)
+        # 不间断空格替换为普通空格
+        text = text.replace('\u00a0', ' ')
+        # 其他不可见控制字符（保留换行和制表符）
+        text = re.sub(r'[\u200e\u200f\u2028\u2029\u205f\u2061\u2062\u2063\u2064]', '', text)
         return text
 
     def _build_markdown(self, title: str, authors: str, abstract: str,

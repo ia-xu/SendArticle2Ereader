@@ -276,8 +276,61 @@ class MarkdownToKFX:
         # 问题模式1: $...$$...$ (行内开始，中间有$$，行内结束)
         # 这通常是因为知乎解析错误，多个公式被合并了
         # 策略：将 $$ 替换为 $ 来分割成两个独立的行内公式
+
+        def is_valid_formula_content(text):
+            """
+            检查公式内容是否有效
+            1. 如果包含 Markdown 标记（图片、链接、标题等），认为不是有效公式
+            2. 计算中文占比时，需要去除链接、图片、Markdown 标记等
+            3. 如果中文占比超过 0.4，认为不是有效的公式内容（可能是错误匹配）
+            """
+            inner = text.strip('$')
+            if not inner:
+                return False
+
+            # 检查是否包含 Markdown 标记
+            # 图片: ![alt](url)
+            if re.search(r'!\[.*?\]\(.*?\)', inner):
+                return False
+            # 链接: [text](url) 或 [text](url "title")
+            if re.search(r'\[([^\]]+)\]\([^\)]+\)', inner):
+                return False
+            # 标题: # 开头的行
+            if re.search(r'^#{1,6}\s', inner, re.MULTILINE):
+                return False
+            # 列表项: - 或 * 或数字. 开头
+            if re.search(r'^(\s*[-*]|\s*\d+\.)\s', inner, re.MULTILINE):
+                return False
+            # 引用块: > 开头
+            if re.search(r'^>\s', inner, re.MULTILINE):
+                return False
+            # 代码块: ``` 或 `code`
+            if re.search(r'```', inner) or re.search(r'`[^`]+`', inner):
+                return False
+            # HTML 标签
+            if re.search(r'<[a-zA-Z][^>]*>', inner):
+                return False
+
+            # 计算中文占比时，先去除空白字符和链接/图片内容
+            # 去除空白字符
+            text_for_count = inner.replace('\n', '').replace(' ', '')
+
+            # 如果文本过短，也不认为是有效公式
+            if len(text_for_count) < 2:
+                return False
+
+            chinese_count = sum(1 for c in text_for_count if '\u4e00' <= c <= '\u9fff')
+            total = len(text_for_count)
+            if total == 0:
+                return False
+            return (chinese_count / total) <= 0.4
+
         def fix_mixed_formula(match):
             text = match.group(0)
+            # 先验证是否是有效的公式内容（中文占比检查）
+            if not is_valid_formula_content(text):
+                return text  # 中文占比过高，不处理，保持原样
+
             # 如果包含 $$ 但不是以 $$ 开始或结束
             if '$$' in text and not text.startswith('$$') and not text.endswith('$$'):
                 # 将内部的 $$ 替换为分隔符
@@ -302,8 +355,8 @@ class MarkdownToKFX:
                 return ' $' + '$ $'.join(result) + '$ '
             return text
 
-        # 匹配可能包含 $$ 的行内公式
-        content = re.sub(r'\$[^$]*\$\$[^$]*\$', fix_mixed_formula, content)
+        # 匹配可能包含 $$ 的行内公式，添加 re.DOTALL 允许跨行匹配，但通过中文占比验证过滤
+        content = re.sub(r'\$[^$]*\$\$[^$]*\$', fix_mixed_formula, content, flags=re.DOTALL)
 
         # 问题模式2: 独立的 $$ (不是块级公式的一部分)
         # 匹配单独出现的 $$ 且前后不是 $$ 的情况
