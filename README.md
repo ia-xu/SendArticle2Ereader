@@ -212,18 +212,17 @@ playwright install chromium
 编辑 `src/config.py` 可以自定义以下配置：
 
 ```python
-# 阅读器导入路径（将此路径设为本地文件夹，然后手动复制到阅读器）
-KINDLE_ARTICLE_PATH = Path('D:/kindle_import')
-
-# 是否启用 EPUB 支持（True: 同时生成 KFX 和 EPUB；False: 仅生成 KFX）
-ENABLE_EPUB_SUPPORT = True
+# 希望导入的阅读器的文件夹的 path
+# 如果阅读器是 kpw6 等需要使用 mtp 协议的
+# 建议设置为一个本地路径手动拷入，或者使用 mtpdriver等工具映射盘符
+KINDLE_ARTICLE_PATH = Path("E:/documents/Downloads/Items01/article")
 ```
 
 ---
 
 ## 使用指南
 
-### 方式一：Web 界面（推荐新手）
+### Web 界面使用方法 
 
 > **重要提示：使用 Web 界面前，请先登录获取 Cookie！**
 >
@@ -235,16 +234,16 @@ ENABLE_EPUB_SUPPORT = True
 
 **启动服务：**
 
-**Windows：**
-双击 `start_webui.bat` 文件
-
-**或手动启动：**
 ```bash
 cd tokindle
 python webui/app.py
 ```
 
-启动后，浏览器访问 http://127.0.0.1:5000 即可使用 Web 界面。
+
+启动后，浏览器访问 http://127.0.0.1:5006 即可使用 Web 界面。
+
+  - 端口号在 src/config.py 里面也可以配置
+
 
 **Web 界面功能：**
 
@@ -256,13 +255,10 @@ python webui/app.py
 
 **格式选择建议：**
 
-| 设备类型 | 推荐格式 |
-|---------|---------|
+| 设备类型      | 推荐格式 |
+|-----------|---------|
 | Kindle 系列 | KFX |
-| 文石 Boox | EPUB |
-| 掌阅 iReader | EPUB |
-| 墨案 | EPUB |
-| 其他国产阅读器 | EPUB |
+| 国产品牌      | EPUB |
 
 ---
 
@@ -272,7 +268,7 @@ python webui/app.py
 
 将知乎专栏文章转换为 Markdown 格式。
 
-**登录获取 Cookie（首次使用推荐）：**
+**登录获取 Cookie**
 
 ```bash
 # 交互式登录，会打开浏览器让你手动登录
@@ -281,12 +277,9 @@ python "src/downloader/zhihu2markdown.py" login
 
 登录成功后，Cookie 会自动保存到 `config/zhihu_cookies.json`。
 
-**其他登录方式：**
+**检查登录状态**
 
 ```bash
-# 从浏览器复制 Cookie 字符串
-python "src/downloader/zhihu2markdown.py" login -c "z_c0=xxx; _xsrf=yyy"
-
 # 检查登录状态
 python "src/downloader/zhihu2markdown.py" login --check
 ```
@@ -300,8 +293,6 @@ python "src/downloader/zhihu2markdown.py" fetch https://zhuanlan.zhihu.com/p/123
 # 指定输出目录
 python "src/downloader/zhihu2markdown.py" fetch https://zhuanlan.zhihu.com/p/123456789 -o ./output
 
-# 强制使用浏览器模式（应对反爬）
-python "src/downloader/zhihu2markdown.py" fetch https://zhuanlan.zhihu.com/p/123456789 --browser
 ```
 
 **支持的 URL 格式：**
@@ -326,14 +317,11 @@ python "src/downloader/zhihu2markdown.py" fetch https://zhuanlan.zhihu.com/p/123
 
 将微信公众号文章转换为 Markdown 格式。
 
-**设置 Cookie（部分文章需要）：**
+**设置 Cookie **
 
 ```bash
 # 交互式登录（会打开浏览器让你扫码登录微信）
 python "src/downloader/wechat2markdown.py" login
-
-# 从浏览器复制 Cookie 字符串
-python "src/downloader/wechat2markdown.py" login -c "cookie字符串"
 
 # 检查登录状态
 python "src/downloader/wechat2markdown.py" login --check
@@ -462,41 +450,26 @@ python "src/downloader/zhihu2markdown.py" login
 
 程序会自动打开浏览器，登录后自动保存 Cookie。
 
-**方式二：手动从浏览器获取**
 
-1. 浏览器访问 https://www.zhihu.com 并登录
-2. 按 F12 打开开发者工具
-3. 切换到 "Network"（网络）标签
-4. 刷新页面
-5. 点击任意请求，在 "Headers"（请求头）中找到 "Cookie"
-6. 复制 Cookie 值
 
-```bash
-# 保存 Cookie
-python "src/downloader/zhihu2markdown.py" login -c "你复制的Cookie"
-```
 
 ### 微信公众号 Cookie 获取方法
 
 与知乎类似，访问微信公众号文章页面后从开发者工具获取 Cookie。
+- 注意，你必须要先创建一个微信公众号并绑定微信，才可以使用此功能
+
 
 ---
 
 ## 常见问题
 
-### Q: 提示 401/403 错误？
+### Q: 微信登录为什么需要一个公众号
 
-A: 需要先登录获取 Cookie：
+- 一般来说，当你希望访问微信的文章，你需要使用相应的 cookie
+- 但是电脑通过python获取到微信本身的cookie是比较困难的，但是微信的微信公众号是可以网页登录的，你可以通过登录微信公众号获取cookie
+- 微信公众号的注册是比较简单的
 
-```bash
-python "src/downloader/zhihu2markdown.py" login
-```
 
-### Q: 图片无法显示？
-
-A:
-- 知乎图片可能需要正确的 Referer 才能显示
-- 建议使用 Web 界面转换，会自动下载图片
 
 ### Q: KFX 转换失败？
 
@@ -531,15 +504,6 @@ A: 确保终端编码为 UTF-8：
 chcp 65001
 ```
 
-### Q: 国产阅读器如何导入？
-
-A:
-1. 将阅读器通过 USB 连接到电脑
-2. 在阅读器上选择"文件传输"模式
-3. 将转换好的 EPUB 文件复制到阅读器的书籍目录（通常是 `Books` 或 `Documents` 文件夹）
-4. 断开连接后，在阅读器上刷新书库即可看到新书籍
-
----
 
 ## 依赖说明
 
