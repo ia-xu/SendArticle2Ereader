@@ -7,6 +7,7 @@ arXiv HTML 页面转 Markdown 工具
 - 保留数学公式（LaTeX 格式）
 - 提取标题、作者、摘要等信息
 - 无需登录
+- 支持使用 Playwright 获取图片真实 URL（解决相对路径问题）
 """
 
 import os
@@ -14,11 +15,18 @@ import re
 import sys
 import argparse
 from pathlib import Path
-from typing import Optional, Tuple
-from urllib.parse import urlparse, unquote
+from typing import Optional, Tuple, Dict
+from urllib.parse import urlparse, unquote, urljoin
 
 import requests
 from bs4 import BeautifulSoup, NavigableString
+
+# Playwright 支持（可选）
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 # Windows 编码修复
 if sys.platform == 'win32':
@@ -89,6 +97,73 @@ class ArxivClient:
 
         return None
 
+    def fetch_page_with_playwright(self, url: str) -> Tuple[Optional[str], Dict[str, str]]:
+        """
+        使用 Playwright 获取页面内容和图片的真实 URL
+
+        Args:
+            url: arXiv HTML 页面 URL
+
+        Returns:
+            (html_content, image_url_map)
+            image_url_map: 原始 src -> 浏览器解析后的绝对 URL 的映射
+        """
+        if not PLAYWRIGHT_AVAILABLE:
+            print("[Warning] Playwright not available, falling back to requests")
+            return self.fetch_page(url), {}
+
+        try:
+            # 标准化 URL
+            if not url.startswith('http'):
+                url = 'https://' + url
+
+            # 确保是 arxiv.org/html/ 格式
+            if 'arxiv.org/abs/' in url:
+                url = url.replace('arxiv.org/abs/', 'arxiv.org/html/')
+
+            print(f"[arXiv] Fetching with Playwright: {url}")
+
+            image_url_map = {}
+            html_content = None
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                )
+                page = context.new_page()
+
+                # 访问页面
+                page.goto(url, wait_until='networkidle', timeout=60000)
+
+                # 获取所有图片元素，提取浏览器解析后的真实 URL
+                img_elements = page.query_selector_all('img')
+                for img in img_elements:
+                    try:
+                        # 获取原始 src 属性
+                        original_src = img.get_attribute('src') or ''
+                        # 获取浏览器解析后的完整 URL（通过 JS 获取）
+                        resolved_url = img.evaluate('el => el.src')
+
+                        if original_src and resolved_url:
+                            # 记录映射关系
+                            image_url_map[original_src] = resolved_url
+                    except Exception as e:
+                        continue
+
+                # 获取页面 HTML
+                html_content = page.content()
+
+                browser.close()
+
+            print(f"[arXiv] Playwright resolved {len(image_url_map)} image URLs")
+            return html_content, image_url_map
+
+        except Exception as e:
+            print(f"[Error] Playwright fetch failed: {e}")
+            # 回退到普通请求
+            return self.fetch_page(url), {}
+
 
 class ArxivToMarkdown:
     """arXiv HTML 转 Markdown"""
@@ -98,7 +173,7 @@ class ArxivToMarkdown:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.client = ArxivClient()
 
-    def convert(self, url: str, custom_title: str = None, custom_author: str = None) -> Tuple[bool, str, str]:
+    def convert(self, url: str, custom_title: str = None, custom_author: str = None, use_playwright: bool = True) -> Tuple[bool, str, str]:
         """
         转换 arXiv HTML 页面为 Markdown
 
@@ -106,16 +181,24 @@ class ArxivToMarkdown:
             url: arXiv HTML 页面 URL
             custom_title: 自定义标题
             custom_author: 自定义作者
+            use_playwright: 是否使用 Playwright 获取图片真实 URL（更可靠但更慢）
 
         Returns:
             (success, markdown_content, file_path)
         """
+        # 初始化图片 URL 映射
+        self.image_url_map = {}
+
         # 获取页面内容
-        html = self.client.fetch_page(url)
+        if use_playwright and PLAYWRIGHT_AVAILABLE:
+            html, self.image_url_map = self.client.fetch_page_with_playwright(url)
+        else:
+            html = self.client.fetch_page(url)
+
         if not html:
             return False, "", ""
 
-        # 解析 URL 获取 base_url 用于处理图片等相对路径
+        # 解析 URL 获取 base_url 用于处理图片等相对路径（作为回退方案）
         self.base_url = self._get_base_url(url)
 
         # 解析 HTML
@@ -157,9 +240,13 @@ class ArxivToMarkdown:
         if 'arxiv.org/abs/' in url:
             url = url.replace('arxiv.org/abs/', 'arxiv.org/html/')
 
-        # arXiv HTML 页面上的图片 src 已经包含文章 ID（如 2603.12056v2/x2.png）
-        # 所以 base_url 只需要是 https://arxiv.org/html
-        # 这样拼接后才是正确的 https://arxiv.org/html/2603.12056v2/x2.png
+        # 提取文章 ID 路径部分
+        match = re.search(r'arxiv\.org/html/(\d+\.\d+(?:v\d+)?)', url)
+        if match:
+            self.article_id = match.group(1)
+            return f"https://arxiv.org/html/{self.article_id}"
+
+        self.article_id = None
         return "https://arxiv.org/html"
 
     def _make_absolute_url(self, src: str) -> str:
@@ -175,11 +262,25 @@ class ArxivToMarkdown:
         if src.startswith('data:'):
             return src
 
-        # 使用 base_url 拼接相对路径
+        # 优先使用 Playwright 解析的 URL 映射
+        if hasattr(self, 'image_url_map') and src in self.image_url_map:
+            return self.image_url_map[src]
+
+        # 使用 base_url 拼接相对路径（回退方案）
         if hasattr(self, 'base_url') and self.base_url:
             # 移除开头的 ./
             src = src.lstrip('./')
-            return f"{self.base_url}/{src}"
+
+            # 判断 src 是否已经包含文章 ID
+            # arXiv 文章 ID 格式：四位数字.四位或五位数字，可选 v数字
+            # 如 2603.12056v2/x2.png 或 2603.12056/x2.png
+            article_id_pattern = r'^\d{4}\.\d{4,5}(?:v\d+)?/'
+            if re.match(article_id_pattern, src):
+                # src 已包含文章 ID，拼接到基础 arxiv.org/html
+                return f"https://arxiv.org/html/{src}"
+            else:
+                # src 只是文件名，使用包含文章 ID 的完整 base_url
+                return f"{self.base_url}/{src}"
 
         return src
 
@@ -538,7 +639,74 @@ class ArxivToMarkdown:
         return False
 
     def _convert_equation_table(self, table) -> str:
-        """转换 arXiv 公式表格为带编号的公式"""
+        """转换 arXiv 公式表格为带编号的公式
+
+        支持：
+        - 单行公式（ltx_equation）
+        - 多行公式组（ltx_equationgroup）：多行组成一个完整公式
+        """
+        # 检测是否是多行公式组
+        table_classes = table.get('class', [])
+        is_equation_group = any('ltx_equationgroup' in c for c in table_classes)
+
+        if is_equation_group:
+            # 多行公式组：合并所有行为一个公式
+            return self._convert_equation_group(table)
+        else:
+            # 单行公式：逐行处理
+            return self._convert_single_equations(table)
+
+    def _convert_equation_group(self, table) -> str:
+        """转换多行公式组（ltx_equationgroup）"""
+        latex_parts = []
+        eq_number = None
+
+        for tr in table.find_all('tr'):
+            tr_classes = tr.get('class', [])
+            if not any('ltx_equation' in c for c in tr_classes):
+                continue
+
+            # 提取公式内容
+            math_elem = tr.find('math')
+            if not math_elem:
+                continue
+
+            # 获取 LaTeX
+            latex = math_elem.get('alttext', '')
+            if not latex:
+                annotation = math_elem.find('annotation')
+                if annotation and annotation.get('encoding') == 'application/x-tex':
+                    latex = annotation.get_text()
+
+            if not latex:
+                latex = math_elem.get_text().strip()
+
+            # 清理末尾的逗号（如果有的话，保留在最终合并结果中）
+            latex_parts.append(latex)
+
+            # 提取编号（通常在第一行或带有 rowspan 的单元格中）
+            if eq_number is None:
+                tag_span = tr.find('span', class_='ltx_tag')
+                if tag_span:
+                    eq_number = tag_span.get_text().strip()
+
+        if not latex_parts:
+            return ''
+
+        # 合并所有部分的 LaTeX
+        # 注意：各部分可能已经有正确的连接（如逗号、运算符等）
+        combined_latex = ' '.join(latex_parts)
+
+        # 输出公式，编号用 \qquad 添加到公式末尾
+        if eq_number:
+            # 编号格式如 "(1)"，提取数字
+            num = eq_number.strip('()')
+            return f"$$\n{combined_latex} \\qquad ({num})\n$$\n"
+        else:
+            return f"$$\n{combined_latex}\n$$\n"
+
+    def _convert_single_equations(self, table) -> str:
+        """转换单行公式（每行一个独立公式）"""
         results = []
 
         for tr in table.find_all('tr'):
@@ -567,9 +735,10 @@ class ArxivToMarkdown:
             if tag_span:
                 eq_number = tag_span.get_text().strip()
 
-            # 输出公式
+            # 输出公式，编号用 \qquad 添加到公式末尾
             if eq_number:
-                results.append(f"$$\n{latex}\n$$ {{#eq-{eq_number.strip('()')}}}\n")
+                num = eq_number.strip('()')
+                results.append(f"$$\n{latex} \\qquad ({num})\n$$\n")
             else:
                 results.append(f"$$\n{latex}\n$$\n")
 

@@ -272,6 +272,10 @@ class MarkdownToKFX:
         content = re.sub(r'\$\$(.*?)\$\$\s*\1', r'$$\1$$', content, flags=re.DOTALL)
         content = re.sub(r'\$([^\$\n]+)\$\s*\1', r'$\1$', content)
 
+        # 移除 pandoc 公式标签 {#eq-xxx}（放在公式块后面，Kindle 不支持）
+        # 例如: $$...$$ {#eq-1} -> $$...$$
+        content = re.sub(r'(\$\$[^\$]*\$\$)\s*\{#eq[^}]*\}', r'\1', content, flags=re.DOTALL)
+
         # 修复格式错误的公式：$...$$...$ 或 $$...$...$$ 等混合格式
         # 问题模式1: $...$$...$ (行内开始，中间有$$，行内结束)
         # 这通常是因为知乎解析错误，多个公式被合并了
@@ -355,8 +359,10 @@ class MarkdownToKFX:
                 return ' $' + '$ $'.join(result) + '$ '
             return text
 
-        # 匹配可能包含 $$ 的行内公式，添加 re.DOTALL 允许跨行匹配，但通过中文占比验证过滤
-        content = re.sub(r'\$[^$]*\$\$[^$]*\$', fix_mixed_formula, content, flags=re.DOTALL)
+        # 匹配可能包含 $$ 的行内公式，添加 re.DOTALL 允许跨行匹配
+        # 关键修复：确保开头是单独的 $（不是 $$ 的一部分），使用 (?<!\$)\$(?!\$)
+        # 这样可以避免错误匹配块级公式 $$...$$ 的一部分
+        content = re.sub(r'(?<!\$)\$(?!\$)[^$]*\$\$[^$]*\$(?!\$)', fix_mixed_formula, content, flags=re.DOTALL)
 
         # 问题模式2: 独立的 $$ (不是块级公式的一部分)
         # 匹配单独出现的 $$ 且前后不是 $$ 的情况

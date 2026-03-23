@@ -843,7 +843,11 @@ def push_to_kindle(file_id):
     info = get_file_info(file_id)
     print(f"Push to device - file_id: {file_id}, name: {info.get('name') if info else 'N/A'}")
 
-    success, message = copy_to_kindle(file_id)
+    # 获取 file_type 参数，默认为 kfx
+    data = request.get_json() or {}
+    file_type = data.get('file_type', 'kfx')
+
+    success, message = copy_to_kindle(file_id, file_type)
     if success:
         return jsonify({'success': True, 'message': message})
     return jsonify({'success': False, 'message': message}), 400

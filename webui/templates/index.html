@@ -822,9 +822,17 @@
                                             <i class="bi bi-eject"></i> 移除
                                         </button>
                                         {% else %}
-                                        <button class="btn btn-sm btn-send-kindle send-kindle-btn" data-id="{{ file.id }}" title="推送到阅读器">
-                                            <i class="bi bi-send"></i> 推送
-                                        </button>
+                                        <div class="btn-group" role="group">
+                                            <button type="button" class="btn btn-sm btn-send-kindle dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                                <i class="bi bi-send"></i> 推送
+                                            </button>
+                                            <ul class="dropdown-menu">
+                                                <li><a class="dropdown-item push-kfx-btn" href="#" data-id="{{ file.id }}"><i class="bi bi-file-earmark-text"></i> 推送 KFX</a></li>
+                                                {% if enable_epub %}
+                                                <li><a class="dropdown-item push-epub-btn" href="#" data-id="{{ file.id }}"><i class="bi bi-file-earmark-text" style="color: #fd7e14;"></i> 推送 EPUB</a></li>
+                                                {% endif %}
+                                            </ul>
+                                        </div>
                                         {% endif %}
                                     {% else %}
                                     <span class="text-muted" style="font-size: 0.85rem;">需先转换</span>
@@ -1620,6 +1628,72 @@
                 } catch (err) {
                     console.error(`${actionName} 阅读器错误:`, err);
                     showToast('操作失败：' + err.message, 'error');
+                }
+                hideLoading();
+            });
+        });
+
+        // 推送 KFX 按钮
+        document.querySelectorAll('.push-kfx-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const fileId = btn.dataset.id;
+
+                if (!kindleConnected) {
+                    showToast('阅读器未连接，请先插入阅读器', 'error');
+                    return;
+                }
+
+                showLoading();
+                try {
+                    const res = await fetch('/kindle/push/' + fileId, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ file_type: 'kfx' })
+                    });
+                    const data = await res.json();
+
+                    if (data.success) {
+                        showToast(data.message || 'KFX 推送成功', 'success');
+                        setTimeout(() => location.reload(), 500);
+                    } else {
+                        showToast(data.message || '推送失败', 'error');
+                    }
+                } catch (err) {
+                    showToast('推送失败：' + err.message, 'error');
+                }
+                hideLoading();
+            });
+        });
+
+        // 推送 EPUB 按钮
+        document.querySelectorAll('.push-epub-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const fileId = btn.dataset.id;
+
+                if (!kindleConnected) {
+                    showToast('阅读器未连接，请先插入阅读器', 'error');
+                    return;
+                }
+
+                showLoading();
+                try {
+                    const res = await fetch('/kindle/push/' + fileId, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ file_type: 'epub' })
+                    });
+                    const data = await res.json();
+
+                    if (data.success) {
+                        showToast(data.message || 'EPUB 推送成功', 'success');
+                        setTimeout(() => location.reload(), 500);
+                    } else {
+                        showToast(data.message || '推送失败', 'error');
+                    }
+                } catch (err) {
+                    showToast('推送失败：' + err.message, 'error');
                 }
                 hideLoading();
             });
