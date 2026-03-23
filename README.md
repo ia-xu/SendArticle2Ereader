@@ -78,10 +78,7 @@ tokindle/
 │   └── wechat_cookies.json            # 微信 Cookie（自动生成）
 ├── uploads/                           # 上传文件临时目录
 ├── outputs/                           # 转换输出目录
-├── database/                          # 文章数据库目录
-├── misc/                              # 辅助工具脚本
 ├── requirements.txt                   # Python 依赖
-├── start_webui.bat                    # Windows 启动脚本
 └── README.md                          # 本文档
 ```
 
