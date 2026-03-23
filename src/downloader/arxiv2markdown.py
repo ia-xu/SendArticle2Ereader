@@ -216,6 +216,9 @@ class ArxivToMarkdown:
         # 构建 Markdown
         markdown = self._build_markdown(title, authors, abstract, body_content, url, article_id)
 
+        # 清理 arXiv 动态添加的内容残留
+        markdown = self._clean_arxiv_artifacts(markdown)
+
         # 清理零宽字符和不可见字符
         markdown = self._clean_invisible_chars(markdown)
 
@@ -334,7 +337,18 @@ class ArxivToMarkdown:
             # 移除标题
             for h2 in abstract_elem.find_all('h2'):
                 h2.decompose()
-            return self._clean_text(abstract_elem.get_text())
+            # 移除动态添加的 "Report issue" 按钮
+            for button in abstract_elem.find_all('button'):
+                if 'Report issue' in button.get_text():
+                    button.decompose()
+            for button in abstract_elem.find_all('button', class_='sr-only'):
+                button.decompose()
+            # 获取文本并清理
+            text = abstract_elem.get_text()
+            text = self._clean_text(text)
+            # 清理 arXiv 动态添加的内容
+            text = self._clean_arxiv_artifacts(text)
+            return text
 
         # 备用选择器
         abstract_elem = soup.select_one('blockquote.abstract')
@@ -342,7 +356,9 @@ class ArxivToMarkdown:
             text = abstract_elem.get_text()
             # 移除 "Abstract" 前缀
             text = re.sub(r'^Abstract\s*', '', text, flags=re.IGNORECASE)
-            return self._clean_text(text)
+            text = self._clean_text(text)
+            text = self._clean_arxiv_artifacts(text)
+            return text
 
         return ''
 
@@ -362,6 +378,35 @@ class ArxivToMarkdown:
         for tag in content.find_all(['script', 'style', 'nav', 'footer', 'header']):
             tag.decompose()
 
+        # 移除 arXiv 动态添加的 "Report issue for preceding element" 按钮
+        # 这些按钮由 JavaScript (feedbackOverlay.js) 动态添加，class 为 "sr-only button"
+        for button in content.find_all('button', class_='sr-only'):
+            button.decompose()
+        for button in content.find_all('button', class_='button'):
+            if 'Report issue' in button.get_text():
+                button.decompose()
+
+        # 移除 arXiv 错误报告链接
+        for a in content.find_all('a'):
+            if 'Report issue' in a.get_text():
+                a.decompose()
+
+        # 移除 arXiv 系统警告区块
+        for elem in content.find_all(class_='ltx_warning'):
+            elem.decompose()
+
+        # 移除包含 arXiv HTML 转换警告的元素（由 addons_new.js 动态添加）
+        for elem in content.find_all(['div', 'section', 'p', 'aside', 'ul', 'ol']):
+            text = elem.get_text()
+            if 'HTML conversions [sometimes display errors]' in text:
+                elem.decompose()
+            elif 'failed:' in text and '.sty' in text:
+                elem.decompose()
+            elif 'achieve the best HTML results' in text:
+                elem.decompose()
+            elif 'License: arXiv.org perpetual' in text:
+                elem.decompose()
+
         # 移除摘要部分（已单独处理）
         for abstract in content.find_all(class_='ltx_abstract'):
             abstract.decompose()
@@ -374,6 +419,9 @@ class ArxivToMarkdown:
 
         # 转换为 Markdown
         markdown = self._html_to_markdown(content)
+
+        # 后处理：移除残留的 "Report issue for preceding element" 文本
+        markdown = self._clean_arxiv_artifacts(markdown)
 
         return markdown
 
@@ -509,6 +557,8 @@ class ArxivToMarkdown:
             latex = self._extract_latex_from_mathml(element)
 
         if latex:
+            # 清理 LaTeX 中的字体大小命令（Kindle 不支持）
+            latex = self._clean_latex_font_commands(latex)
             if inline:
                 return f"${latex}$"
             return f"\n\n$$\n{latex}\n$$\n\n"
@@ -681,7 +731,8 @@ class ArxivToMarkdown:
             if not latex:
                 latex = math_elem.get_text().strip()
 
-            # 清理末尾的逗号（如果有的话，保留在最终合并结果中）
+            # 清理 LaTeX 中的字体大小命令
+            latex = self._clean_latex_font_commands(latex)
             latex_parts.append(latex)
 
             # 提取编号（通常在第一行或带有 rowspan 的单元格中）
@@ -694,12 +745,10 @@ class ArxivToMarkdown:
             return ''
 
         # 合并所有部分的 LaTeX
-        # 注意：各部分可能已经有正确的连接（如逗号、运算符等）
         combined_latex = ' '.join(latex_parts)
 
         # 输出公式，编号用 \qquad 添加到公式末尾
         if eq_number:
-            # 编号格式如 "(1)"，提取数字
             num = eq_number.strip('()')
             return f"$$\n{combined_latex} \\qquad ({num})\n$$\n"
         else:
@@ -728,6 +777,9 @@ class ArxivToMarkdown:
 
             if not latex:
                 latex = math_elem.get_text().strip()
+
+            # 清理 LaTeX 中的字体大小命令
+            latex = self._clean_latex_font_commands(latex)
 
             # 提取编号
             eq_number = ''
@@ -758,6 +810,8 @@ class ArxivToMarkdown:
                     if annotation and annotation.get('encoding') == 'application/x-tex':
                         latex = annotation.get_text()
                 if latex:
+                    # 清理字体命令
+                    latex = self._clean_latex_font_commands(latex)
                     parts.append(f"${latex}$")
                 else:
                     parts.append(child.get_text())
@@ -786,6 +840,43 @@ class ArxivToMarkdown:
         # 其他不可见控制字符（保留换行和制表符）
         text = re.sub(r'[\u200e\u200f\u2028\u2029\u205f\u2061\u2062\u2063\u2064]', '', text)
         return text
+
+    def _clean_arxiv_artifacts(self, text: str) -> str:
+        """清理 arXiv 动态添加的内容残留"""
+        # 移除 "Report issue for preceding element" 文本
+        text = re.sub(r'\s*Report issue for preceding element\s*', ' ', text)
+
+        # 移除 HTML conversion warnings 残留
+        patterns_to_remove = [
+            r'HTML conversions \[sometimes display errors\][^\n]*',
+            r'failed:\s*\w+\.sty',
+            r'achieve the best HTML results[^\n]*',
+            r'License: arXiv\.org perpetual[^\n]*',
+        ]
+        for pattern in patterns_to_remove:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+
+        # 清理多余的空行（超过2个连续空行变为2个）
+        text = re.sub(r'\n{3,}', '\n\n', text)
+
+        return text.strip()
+
+    def _clean_latex_font_commands(self, latex: str) -> str:
+        """清理 LaTeX 公式中的字体大小命令（Kindle 不支持）"""
+        # 移除字体大小命令：\footnotesize, \small, \large, \Large, \LARGE, \huge, \Huge
+        # 以及 \tiny, \scriptsize, \normalsize
+        font_commands = [
+            r'\\tiny\b', r'\\scriptsize\b', r'\\footnotesize\b',
+            r'\\small\b', r'\\normalsize\b', r'\\large\b',
+            r'\\Large\b', r'\\LARGE\b', r'\\huge\b', r'\\Huge\b'
+        ]
+        for cmd in font_commands:
+            latex = re.sub(cmd, '', latex)
+
+        # 清理多余的空格
+        latex = re.sub(r'\s+', ' ', latex).strip()
+
+        return latex
 
     def _build_markdown(self, title: str, authors: str, abstract: str,
                         body: str, url: str, article_id: str) -> str:

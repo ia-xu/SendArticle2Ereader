@@ -32,7 +32,7 @@ from src.config import (
 from src.md2kfx import MarkdownToKFX
 
 # 知乎下载器导入
-ZHIHU_DOWNLOADER_PATH = Path(__file__).parent.parent / 'src' / ' downloader'
+ZHIHU_DOWNLOADER_PATH = Path(__file__).parent.parent / 'src' / 'downloader'
 sys.path.insert(0, str(ZHIHU_DOWNLOADER_PATH))
 try:
     from zhihu2markdown import ZhihuAuth, ZhihuToMarkdown, ZhihuClient
