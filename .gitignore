@@ -6,3 +6,4 @@ uploads
 images
 *.epub
 settings.local.json
+__pycache__
