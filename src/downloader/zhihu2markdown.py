@@ -691,7 +691,7 @@ class ZhihuToMarkdown:
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(markdown)
 
-        print(f"[Success] Saved to: {output_file}")
+        print(f"[完成] 《{title}》已保存")
         return markdown, str(output_file)
 
 

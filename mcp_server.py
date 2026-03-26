@@ -149,9 +149,12 @@ def _download_zhihu_sync(url: str, custom_title: str = None, custom_author: str 
             auth = ZhihuAuth(cookie_file=str(ZHIHU_COOKIE_FILE))
             cookies = auth.load_cookies()
 
+        file_id = str(uuid.uuid4())[:8]
+
         converter = ZhihuToMarkdown(
-            output_dir=str(BASE_DIR),
-            cookies=cookies
+            output_dir=str(UPLOAD_FOLDER),
+            cookies=cookies,
+            file_prefix=file_id
         )
 
         result = converter.convert(url, use_browser=False)
@@ -169,12 +172,20 @@ def _download_zhihu_sync(url: str, custom_title: str = None, custom_author: str 
         if not downloaded_path.exists():
             return {"success": False, "error": "文件保存失败"}
 
-        file_id = str(uuid.uuid4())[:8]
-        title = custom_title or downloaded_path.stem
+        title = custom_title or file_id
         author = custom_author or 'Unknown'
 
+        # 从 markdown 内容提取标题
+        if markdown_content.startswith('---'):
+            import re
+            title_match = re.search(r'^title:\s*(.+)$', markdown_content, re.MULTILINE)
+            if title_match:
+                title = custom_title or title_match.group(1).strip()
+            author_match = re.search(r'^author:\s*(.+)$', markdown_content, re.MULTILINE)
+            if author_match and not custom_author:
+                author = author_match.group(1).strip()
+
         md_path = UPLOAD_FOLDER / f"{file_id}.md"
-        shutil.move(str(downloaded_path), str(md_path))
 
         file_info = {
             'name': title,

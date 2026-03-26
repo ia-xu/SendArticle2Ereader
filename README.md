@@ -2,8 +2,15 @@
 
 将网络文章转换为墨水屏阅读器友好格式的工具集。
 
+- 支持通过页面下载、转换、导入文章到 kindle
+
 ![img.png](articles/img.png)
 
+- 支持通过 mcp 下载、管理和导入
+
+![mcp1.png](articles/mcp1.png)
+![mcp2.png](articles/mcp2.png)
+![mcp3.png](articles/mcp3.png)
 
 项目介绍: 
   - https://zhuanlan.zhihu.com/p/2019355339670189711
