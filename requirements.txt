@@ -7,3 +7,4 @@ pygments
 flask
 latex2mathml
 pymtp
+mcp>=1.0.0

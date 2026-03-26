@@ -284,9 +284,95 @@ python webui/app.py
 
 **功能概述：**
 - `download_and_convert` - 从 URL 自动下载并转换为 KFX/EPUB（支持知乎、微信、arXiv）
+- `batch_download_and_convert` - 批量并行下载并转换多篇文章
 - `search_files` - 按关键字搜索文件
 - `send_to_kindle` / `delete_from_kindle` - Kindle 设备文件管理
 - `list_files` / `get_file_info` / `delete_file` - 文件管理
+- `check_kindle_connection` / `list_kindle_files` - Kindle 设备状态
+
+---
+
+#### 📖 MCP Server 配置与调试指南
+
+本项目支持两种运行模式：**开发调试模式 (SSE)** 和 **生产使用模式 (Stdio)**。
+
+##### 1. 开发调试模式 (SSE)
+
+如果你需要对代码进行断点调试（Breakpoint Debugging），请使用 SSE 模式。
+
+**第一步：启动本地 Python 服务**
+
+在你的 IDE（如 VS Code）中直接运行 `mcp_server.py`。确保代码中配置了正确的端口：
+
+```python
+# mcp_server.py
+if __name__ == "__main__":
+    mcp.run(transport="sse", host="127.0.0.1", port=48000)
+```
+
+**第二步：配置 Claude Code**
+
+在 Claude Code 中通过以下命令连接到正在运行的服务：
+
+```bash
+/mcp add sse http://127.0.0.1:48000/sse
+```
+
+或者手动修改配置文件：
+
+```json
+"tokindle-debug": {
+  "type": "sse",
+  "url": "http://127.0.0.1:48000/sse"
+}
+```
+
+**优点：**
+- 可以在 IDE 中打断点，实时观察变量
+- 修改代码后重启 Python 脚本即可，无需频繁改动 Claude 配置
+
+##### 2. 生产使用模式 (Stdio)
+
+当你完成开发，希望 Claude 自动管理 Server 的启动和关闭时，请使用 Stdio 模式。
+
+**第一步：修改代码启动方式**
+
+确保你的 `mcp_server.py` 默认使用 stdio（这是 FastMCP 的默认值）：
+
+```python
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
+```
+
+**第二步：配置 Claude Code**
+
+使用绝对路径添加服务：
+
+```bash
+/mcp add python literal:/path/to/tokindle/mcp_server.py
+```
+
+对应的配置文件内容如下：
+
+```json
+"tokindle": {
+  "type": "stdio",
+  "command": "python",
+  "args": ["literal:/path/to/tokindle/mcp_server.py"]
+}
+```
+
+**优点：**
+- 无需手动运行 Python 脚本，Claude 启动时会自动拉起该进程
+
+##### 3. 常见操作流程对比
+
+| 场景 | 传输协议 | 如何应用代码修改 | 调试方法 |
+|------|----------|------------------|----------|
+| 日常开发 | sse | 重启 Python 脚本即可 | IDE 断点、print()、logging |
+| 稳定使用 | stdio | 在 Claude Code 中执行 `/mcp reload` | 查看 Claude 输出日志 |
+
+---
 
 #### Claude Desktop 配置
 
@@ -332,6 +418,7 @@ python webui/app.py
 配置完成后，你可以在 Claude 中直接说：
 
 - "帮我下载这篇知乎文章并转换：https://zhuanlan.zhihu.com/p/xxx"
+- "批量下载这几篇文章：[url1, url2, url3]"
 - "搜索包含'机器学习'的文件"
 - "把这篇文章推送到 Kindle"
 
@@ -598,11 +685,6 @@ chcp 65001
 | mcp | MCP 服务（可选，用于 Claude 集成） |
 
 ---
-
-MCP 使用方法
-claude mcp add --transport stdio --scope project tokindle -- literal:/path/to/your/python literal:/path/to/tokindle/mcp_server.py   
-
-
 
 ## License
 
