@@ -478,9 +478,10 @@ class MarkdownToKFX:
         def clean_latex_source(latex):
             # 移除 label
             latex = re.sub(r'\\label\{.*?\}', '', latex)
-            # 粗体命令替换：\boldsymbol 和 \bm 都替换为 \mathbf
+            # 粗体命令替换：\boldsymbol、\bm、\pmb 都替换为 \mathbf
             latex = latex.replace(r'\boldsymbol', r'\mathbf')
             latex = re.sub(r'\\bm\s*\{', r'\\mathbf{', latex)
+            latex = re.sub(r'\\pmb\s*\{', r'\\mathbf{', latex)
             # \tag{...} 转为占位符，后续显示为编号
             latex = re.sub(r'\\tag\s*\{([^}]*)\}',
                           lambda m: f'\\quad\\text{{{TAG_MARKER}({m.group(1)}){END_MARKER}}}', latex)

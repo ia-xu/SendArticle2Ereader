@@ -411,6 +411,47 @@ class ZhihuToMarkdown:
 
     def _process_zhihu_elements(self, soup):
         """处理知乎特有的元素"""
+        # 处理 MathJax 公式 - <script type="math/tex"> 或 <script type="math/tex;mode=display">
+        # 这是知乎新版公式渲染方式，需要优先处理
+        for script in soup.find_all('script'):
+            script_type = script.get('type', '')
+            if script_type == 'math/tex':
+                # 行内公式
+                latex = script.string or ''
+                if latex:
+                    script.replace_with(f'${latex}$')
+                else:
+                    script.decompose()
+            elif script_type == 'math/tex;mode=display' or 'mode=display' in script_type:
+                # 块级公式
+                latex = script.string or ''
+                if latex:
+                    script.replace_with(f'\n$$\n{latex}\n$$\n')
+                else:
+                    script.decompose()
+
+        # 处理 math-holder span（知乎备用的 LaTeX 存储）
+        for span in soup.find_all('span', class_='math-holder'):
+            latex = span.get_text().strip()
+            if latex:
+                # 判断是否在块级元素中（通过检查父元素）
+                parent = span.find_parent(['p', 'div'])
+                is_block = parent and len(parent.get_text().strip()) == len(span.get_text().strip()) + len(parent.find('span', class_='math-holder').get_text().strip() if parent.find('span', class_='math-holder') else '')
+                # 简单判断：如果前面是换行或段落开始，视为块级
+                is_block = span.find_previous_sibling() is None or span.find_previous_sibling().name in ['br', 'div']
+                if is_block:
+                    span.replace_with(f'\n$$\n{latex}\n$$\n')
+                else:
+                    span.replace_with(f'${latex}$')
+            else:
+                span.decompose()
+
+        # 移除 MathJax 渲染结果（SVG 等），避免产生乱码
+        for tag in soup.find_all(['span'], class_=['MathJax_SVG_Display', 'MathJax_SVG', 'MathJax_Preview']):
+            tag.decompose()
+        for tag in soup.find_all('span', class_=lambda x: x and 'MJX' in ' '.join(x) if isinstance(x, list) else False):
+            tag.decompose()
+
         # 处理 LaTeX 公式 - 知乎的公式图片（zhihu.com/equation?tex=...）
         for img in soup.find_all('img'):
             src = img.get('data-original') or img.get('data-src') or img.get('src', '')

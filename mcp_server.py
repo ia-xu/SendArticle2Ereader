@@ -46,7 +46,7 @@ from src.tools.kindle import (
     check_kindle_connected,
     get_kindle_files,
     copy_to_kindle,
-    delete_from_kindle
+    delete_from_kindle as _delete_from_kindle_impl
 )
 from src.tools.file_manager import (
     list_all_files,
@@ -460,7 +460,7 @@ async def batch_download_and_convert(
 
 
 @mcp.tool()
-def download_and_convert(
+async def download_and_convert(
     url: str,
     title: Optional[str] = None,
     author: Optional[str] = None
@@ -480,12 +480,15 @@ def download_and_convert(
     if url_type == 'unknown':
         return {"success": False, "error": "不支持的 URL 类型，目前支持知乎、微信公众号、arXiv"}
 
+    # 使用 run_in_executor 避免在 asyncio 事件循环中直接运行 Playwright 同步 API
+    loop = asyncio.get_event_loop()
+
     if url_type == 'zhihu':
-        result = _download_zhihu_sync(url, title, author)
+        result = await loop.run_in_executor(None, _download_zhihu_sync, url, title, author)
     elif url_type == 'wechat':
-        result = _download_wechat_sync(url, title, author)
+        result = await loop.run_in_executor(None, _download_wechat_sync, url, title, author)
     elif url_type == 'arxiv':
-        result = _download_arxiv_sync(url, title, author)
+        result = await loop.run_in_executor(None, _download_arxiv_sync, url, title, author)
     else:
         result = {"success": False, "error": "不支持的 URL 类型"}
 
@@ -545,7 +548,7 @@ def delete_from_kindle(file_id: str) -> dict:
     if not file_id:
         return {"success": False, "error": "file_id 不能为空"}
 
-    success, message, deleted_items = delete_from_kindle(file_id)
+    success, message, deleted_items = _delete_from_kindle_impl(file_id)
     return {
         "success": success,
         "file_id": file_id,
