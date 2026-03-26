@@ -411,46 +411,84 @@ class ZhihuToMarkdown:
 
     def _process_zhihu_elements(self, soup):
         """处理知乎特有的元素"""
-        # 处理 MathJax 公式 - <script type="math/tex"> 或 <script type="math/tex;mode=display">
-        # 这是知乎新版公式渲染方式，需要优先处理
-        for script in soup.find_all('script'):
-            script_type = script.get('type', '')
-            if script_type == 'math/tex':
-                # 行内公式
-                latex = script.string or ''
-                if latex:
-                    script.replace_with(f'${latex}$')
+        # 优先处理 ztext-math span，这是知乎公式的主要载体
+        # <span class="ztext-math" data-tex="公式内容">...</span>
+        for span in soup.find_all('span', class_='ztext-math'):
+            latex = span.get('data-tex', '')
+            if not latex:
+                # 尝试从内部 script 或 math-holder 获取
+                inner_script = span.find('script', type=lambda x: x and x.startswith('math/tex'))
+                if inner_script and inner_script.string:
+                    latex = inner_script.string
                 else:
-                    script.decompose()
-            elif script_type == 'math/tex;mode=display' or 'mode=display' in script_type:
-                # 块级公式
-                latex = script.string or ''
-                if latex:
-                    script.replace_with(f'\n$$\n{latex}\n$$\n')
-                else:
-                    script.decompose()
+                    inner_holder = span.find('span', class_='math-holder')
+                    if inner_holder:
+                        latex = inner_holder.get_text().strip()
+
+            if not latex:
+                span.decompose()
+                continue
+
+            # 判断是行内还是块级公式：
+            # 找到所在的 <p> 标签，检查是否还有其他文字内容
+            p_parent = span.find_parent('p')
+            is_inline = False
+
+            if p_parent:
+                # 获取 <p> 的直接文本内容（不包括子标签的文字）
+                # 通过遍历子节点，排除 ztext-math 相关元素
+                remaining_parts = []
+                for child in p_parent.children:
+                    if isinstance(child, str):
+                        # 文本节点
+                        remaining_parts.append(child)
+                    elif hasattr(child, 'name'):
+                        # 元素节点
+                        if child.name == 'span' and 'ztext-math' in (child.get('class') or []):
+                            continue  # 跳过公式
+                        else:
+                            remaining_parts.append(child.get_text())
+
+                remaining_text = ''.join(remaining_parts).strip()
+                # 如果还有其他文字内容，就是行内公式
+                is_inline = bool(remaining_text)
+
+            if is_inline:
+                span.replace_with(f'${latex}$')
+            else:
+                span.replace_with(f'\n$$\n{latex}\n$$\n')
 
         # 处理 math-holder span（知乎备用的 LaTeX 存储）
         for span in soup.find_all('span', class_='math-holder'):
             latex = span.get_text().strip()
             if latex:
-                # 判断是行内还是块级：检查前后是否有非空白文本
-                # 获取父元素的直接文本内容
-                parent = span.find_parent(['p', 'div', 'span'])
-                if parent:
-                    # 获取父元素中公式前后的文本
-                    parent_text = parent.get_text()
-                    # 找到公式在父元素文本中的位置
-                    span_text = span.get_text()
-                    # 简单判断：检查公式前后是否有其他非空白内容
-                    # 使用字符串分割来判断
-                    parts = parent_text.split(span_text)
-                    has_text_before = parts[0].strip() if parts else False
-                    has_text_after = parts[1].strip() if len(parts) > 1 else False
-                    # 如果前后都有文字，或者父元素文本不只是公式，则为行内公式
-                    is_inline = bool(has_text_before or has_text_after)
-                else:
-                    is_inline = True  # 默认行内
+                # 判断是行内还是块级公式
+                # 关键：检查 MathJax 渲染容器（外层 span）的前后是否有文本
+                # math-holder 通常在一个 span.MathJax_SVG_Display 或类似的容器中
+
+                # 找到包含这个 math-holder 的可见渲染容器
+                render_container = span.find_parent('span', class_=lambda x: x and ('MathJax' in ' '.join(x) if isinstance(x, list) else False))
+                if render_container is None:
+                    render_container = span.parent
+
+                # 检查渲染容器的前后兄弟节点
+                prev_sibling = render_container.find_previous_sibling()
+                next_sibling = render_container.find_next_sibling()
+
+                # 检查前后是否有文本节点（不是公式）
+                has_text_before = False
+                has_text_after = False
+
+                if prev_sibling:
+                    prev_text = prev_sibling.get_text().strip() if hasattr(prev_sibling, 'get_text') else str(prev_sibling).strip()
+                    has_text_before = bool(prev_text)
+
+                if next_sibling:
+                    next_text = next_sibling.get_text().strip() if hasattr(next_sibling, 'get_text') else str(next_sibling).strip()
+                    has_text_after = bool(next_text)
+
+                # 如果前后有文字，是行内公式
+                is_inline = has_text_before or has_text_after
 
                 if is_inline:
                     span.replace_with(f'${latex}$')
