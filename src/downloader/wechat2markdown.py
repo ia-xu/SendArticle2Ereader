@@ -442,8 +442,7 @@ class WeChatToMarkdown:
         self.formula_count = 0
         self.article_prefix = ""
         self._svg_converter = None
-        # 这里的 client 使用你之前定义的 WeChatClient
-        from __main__ import WeChatClient
+        # 使用当前模块中定义的 WeChatClient
         self.client = WeChatClient(cookies=cookies)
 
     def _get_svg_converter(self):

@@ -73,12 +73,22 @@ tokindle/
 │   │   ├── zhihu2markdown.py          # 知乎文章下载器
 │   │   ├── wechat2markdown.py         # 微信公众号下载器
 │   │   └── arxiv2markdown.py          # arXiv 论文下载器
+│   ├── tools/                         # 共享工具模块
+│   │   ├── database.py                # 数据库操作
+│   │   ├── kindle.py                  # Kindle 设备操作
+│   │   └── file_manager.py            # 文件管理
 │   ├── config.py                      # 配置文件
 │   └── md2kfx.py                      # Markdown 转 KFX/EPUB 核心模块
 ├── webui/
 │   ├── app.py                         # Flask Web 服务
 │   └── templates/
 │       └── index.html                 # Web 界面模板
+├── mcp_server.py                      # MCP 服务入口
+├── mcp_tools/                         # MCP 工具模块
+│   ├── __init__.py
+│   ├── download.py                    # 下载转换工具
+│   ├── kindle.py                      # Kindle 管理工具
+│   └── file_manager.py                # 文件管理工具
 ├── config/
 │   ├── zhihu_cookies.json             # 知乎登录 Cookie（自动生成）
 │   └── wechat_cookies.json            # 微信 Cookie（自动生成）
@@ -265,6 +275,67 @@ python webui/app.py
 |-----------|---------|
 | Kindle 系列 | KFX |
 | 国产品牌      | EPUB |
+
+---
+
+### MCP 服务（Claude Desktop / Claude Code）
+
+本项目提供了 MCP (Model Context Protocol) 服务，可以在 Claude Desktop 或 Claude Code 中直接调用 tokindle 的功能。
+
+**功能概述：**
+- `download_and_convert` - 从 URL 自动下载并转换为 KFX/EPUB（支持知乎、微信、arXiv）
+- `search_files` - 按关键字搜索文件
+- `send_to_kindle` / `delete_from_kindle` - Kindle 设备文件管理
+- `list_files` / `get_file_info` / `delete_file` - 文件管理
+
+#### Claude Desktop 配置
+
+1. 找到 Claude Desktop 配置文件：
+   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+2. 添加 MCP 服务器配置：
+
+```json
+{
+  "mcpServers": {
+    "tokindle": {
+      "command": "python",
+      "args": ["literal:/path/to/tokindle/mcp_server.py"],
+      "env": {}
+    }
+  }
+}
+```
+
+> 注意：将 `literal:/path/to/tokindle/mcp_server.py` 替换为你的实际项目路径。
+
+3. 重启 Claude Desktop，即可在对话中使用 tokindle 的功能。
+
+#### Claude Code 配置
+
+在项目根目录创建或编辑 `.claude/settings.json`：
+
+```json
+{
+  "mcpServers": {
+    "tokindle": {
+      "command": "python",
+      "args": ["${workspaceFolder}/mcp_server.py"]
+    }
+  }
+}
+```
+
+#### 使用示例
+
+配置完成后，你可以在 Claude 中直接说：
+
+- "帮我下载这篇知乎文章并转换：https://zhuanlan.zhihu.com/p/xxx"
+- "搜索包含'机器学习'的文件"
+- "把这篇文章推送到 Kindle"
+
+Claude 会自动调用 MCP 工具完成操作，转换结果可以在 Web UI (`http://127.0.0.1:5006`) 中查看。
 
 ---
 
@@ -524,8 +595,14 @@ chcp 65001
 | flask | Web 服务框架 |
 | latex2mathml | LaTeX 公式转 MathML |
 | playwright | 浏览器自动化（可选） |
+| mcp | MCP 服务（可选，用于 Claude 集成） |
 
 ---
+
+MCP 使用方法
+claude mcp add --transport stdio --scope project tokindle -- literal:/path/to/your/python literal:/path/to/tokindle/mcp_server.py   
+
+
 
 ## License
 

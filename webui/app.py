@@ -31,6 +31,22 @@ from src.config import (
 )
 from src.md2kfx import MarkdownToKFX
 
+# 导入共享工具
+from src.tools.database import (
+    load_database,
+    save_database,
+    get_file_info,
+    update_file_info,
+    delete_file_from_db
+)
+from src.tools.kindle import (
+    check_kindle_connected,
+    get_kindle_files,
+    copy_to_kindle,
+    delete_from_kindle,
+    format_name
+)
+
 # 知乎下载器导入
 ZHIHU_DOWNLOADER_PATH = Path(__file__).parent.parent / 'src' / 'downloader'
 sys.path.insert(0, str(ZHIHU_DOWNLOADER_PATH))
@@ -141,226 +157,6 @@ OUTPUT_FOLDER.mkdir(exist_ok=True)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-def load_database():
-    """加载数据库"""
-    if DATABASE_FILE.exists():
-        with open(DATABASE_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {'files': {}}
-
-def save_database(db):
-    """保存数据库"""
-    with open(DATABASE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(db, f, ensure_ascii=False, indent=2)
-
-def get_file_info(file_id):
-    """获取文件信息"""
-    db = load_database()
-    if file_id not in db['files']:
-        return None
-    return db['files'][file_id]
-
-def update_file_info(file_id, info):
-    """更新文件信息"""
-    db = load_database()
-    db['files'][file_id] = info
-    save_database(db)
-
-def delete_file_from_db(file_id):
-    """从数据库删除文件记录"""
-    db = load_database()
-    if file_id in db['files']:
-        del db['files'][file_id]
-        save_database(db)
-
-def format_name(name: str, max_length: int = 100) -> str:
-    """
-    格式化文件名为墨水屏阅读器兼容格式
-
-    墨水屏阅读器文件系统（FAT32/exFAT）不支持以下字符：
-    < > : " / \ | ? *
-    同时处理：
-    - 移除不可见字符
-    - 合并多个空格/下划线
-    - 限制文件名长度
-    - 处理以点开头或结尾的情况
-
-    Args:
-        name: 原始文件名
-        max_length: 最大长度限制（默认100字符）
-
-    Returns:
-        格式化后的文件名
-    """
-    if not name:
-        return "Untitled"
-
-    # 移除零宽字符和不可见字符
-    name = re.sub(r'[\u200b-\u200f\u2028-\u202f\ufeff]', '', name)
-
-    # 替换 Windows/墨水屏阅读器不支持的字符为下划线
-    # 不支持的字符: < > : " / \ | ? *
-    name = re.sub(r'[<>:"/\\|?*]', '_', name)
-
-    # 替换其他特殊字符为下划线（保留常见标点）
-    # 保留：中文、英文、数字、空格、下划线、连字符、括号、逗号、句号
-    # 替换：分号、感叹号、问号等
-    name = re.sub(r'[;！？]', '_', name)
-
-    # 合并多个连续的下划线或空格
-    name = re.sub(r'_{2,}', '_', name)
-    name = re.sub(r'\s{2,}', ' ', name)
-
-    # 移除首尾的空格、下划线、点
-    name = name.strip(' _.')
-
-    # 如果文件名以点开头，添加前缀（避免隐藏文件问题）
-    if name.startswith('.'):
-        name = 'file_' + name
-
-    # 限制长度（保留扩展名的空间，这里只处理文件名主体）
-    if len(name) > max_length:
-        name = name[:max_length].rstrip(' _.')
-
-    # 如果处理后为空，使用默认名称
-    if not name:
-        return "Untitled"
-
-    return name
-
-
-def check_kindle_connected():
-    """检查墨水屏阅读器是否连接"""
-    return KINDLE_ARTICLE_PATH.exists()
-
-def get_kindle_files():
-    """获取墨水屏阅读器中已有的 KFX/EPUB 文件列表（不带扩展名）"""
-    if not check_kindle_connected():
-        return set()
-
-    kindle_files = set()
-    try:
-        # 获取所有 .kfx 和 .epub 文件
-        for ext in ['*.kfx', '*.epub']:
-            for f in KINDLE_ARTICLE_PATH.glob(ext):
-                kindle_files.add(f.stem)
-        print(f"墨水屏阅读器中的文件：{kindle_files}")
-    except Exception as e:
-        print(f"获取墨水屏阅读器文件列表失败：{e}")
-    return kindle_files
-
-def copy_to_kindle(file_id, file_type='kfx'):
-    """将 KFX 或 EPUB 文件复制到墨水屏阅读器
-
-    Args:
-        file_id: 文件ID
-        file_type: 'kfx' 或 'epub'，指定推送的文件类型
-    """
-    if not check_kindle_connected():
-        return False, "墨水屏阅读器未连接"
-
-    info = get_file_info(file_id)
-    if not info:
-        return False, "文件不存在"
-
-    # 使用数据库记录的文件名（original_name 去掉扩展名）
-    original_name = info.get('name', '')
-    if not original_name:
-        return False, "文件名无效"
-
-    # 格式化文件名为墨水屏阅读器兼容格式
-    file_name = format_name(original_name)
-
-    kfx_path = OUTPUT_FOLDER / f"{file_id}.kfx"
-    epub_path = OUTPUT_FOLDER / f"{file_id}.epub"
-
-    if file_type == 'kfx':
-        if not kfx_path.exists():
-            return False, "KFX 文件不存在"
-        try:
-            dest_kfx = KINDLE_ARTICLE_PATH / f"{file_name}.kfx"
-            shutil.copy2(kfx_path, dest_kfx)
-            print(f"Copied: {kfx_path} -> {dest_kfx}")
-            return True, "KFX 推送成功"
-        except Exception as e:
-            print(f"Copy KFX to device failed: {e}")
-            return False, f"KFX 复制失败：{str(e)}"
-    else:  # epub
-        if not epub_path.exists():
-            return False, "EPUB 文件不存在"
-        try:
-            dest_epub = KINDLE_ARTICLE_PATH / f"{file_name}.epub"
-            shutil.copy2(epub_path, dest_epub)
-            print(f"Copied: {epub_path} -> {dest_epub}")
-            return True, "EPUB 推送成功"
-        except Exception as e:
-            print(f"Copy EPUB to device failed: {e}")
-            return False, f"EPUB 复制失败：{str(e)}"
-
-def delete_from_kindle(file_id):
-    """从墨水屏阅读器删除 KFX/EPUB 文件及相关 SDR 文件夹"""
-    if not check_kindle_connected():
-        return False, "墨水屏阅读器未连接"
-
-    info = get_file_info(file_id)
-    if not info:
-        return False, "文件不存在"
-
-    original_name = info.get('name', '')
-    if not original_name:
-        return False, "文件名无效"
-
-    # 格式化文件名为墨水屏阅读器兼容格式（与复制时保持一致）
-    file_name = format_name(original_name)
-
-    try:
-        deleted_items = []
-
-        # 删除 KFX 文件
-        kfx_path = KINDLE_ARTICLE_PATH / f"{file_name}.kfx"
-        if kfx_path.exists():
-            kfx_path.unlink()
-            deleted_items.append(f"{file_name}.kfx")
-            print(f"Deleted: {kfx_path}")
-
-        # 删除 KFX 的 SDR 文件夹（精确匹配：file_name.sdr）
-        kfx_sdr_path = KINDLE_ARTICLE_PATH / f"{file_name}.sdr"
-        if kfx_sdr_path.exists():
-            shutil.rmtree(kfx_sdr_path)
-            deleted_items.append(f"{file_name}.sdr")
-            print(f"Deleted SDR: {kfx_sdr_path}")
-
-        # 删除 file_id.sdr 文件夹（如果存在）
-        sdr_path = KINDLE_ARTICLE_PATH / f"{file_id}.sdr"
-        if sdr_path.exists():
-            shutil.rmtree(sdr_path)
-            deleted_items.append(f"{file_id}.sdr")
-            print(f"Deleted SDR: {sdr_path}")
-
-        # 删除可能存在的 EPUB 文件
-        epub_path = KINDLE_ARTICLE_PATH / f"{file_name}.epub"
-        if epub_path.exists():
-            epub_path.unlink()
-            deleted_items.append(f"{file_name}.epub")
-            print(f"Deleted: {epub_path}")
-
-        # 删除以 file_name_ 开头的 SDR 文件夹（阅读器生成的 {书名}_{唯一 ID}.sdr 格式）
-        try:
-            sdr_prefix = f"{file_name}_"
-            for sdr_dir in KINDLE_ARTICLE_PATH.iterdir():
-                if sdr_dir.is_dir() and sdr_dir.name.startswith(sdr_prefix) and sdr_dir.name.endswith('.sdr'):
-                    shutil.rmtree(sdr_dir)
-                    deleted_items.append(sdr_dir.name)
-                    print(f"Deleted SDR (prefix match): {sdr_dir}")
-        except Exception as e:
-            print(f"Error scanning SDR folders: {e}")
-
-        print(f"Deleted from device: {deleted_items}")
-        return True, f"删除成功，共删除 {len(deleted_items)} 个项目"
-    except Exception as e:
-        print(f"Delete from device failed: {e}")
-        return False, f"删除失败：{str(e)}"
 
 def scan_existing_files():
     """扫描 database 目录中已有的文件并导入"""
@@ -772,7 +568,7 @@ def batch_delete_kindle():
 
     for file_id in file_ids:
         try:
-            success, message = delete_from_kindle(file_id)
+            success, message, _ = delete_from_kindle(file_id)
             if success:
                 results.append({'id': file_id, 'status': 'success', 'message': message})
             else:
@@ -855,7 +651,7 @@ def push_to_kindle(file_id):
 @app.route('/kindle/delete/<file_id>', methods=['POST'])
 def delete_from_kindle_api(file_id):
     """从墨水屏阅读器删除文件"""
-    success, message = delete_from_kindle(file_id)
+    success, message, _ = delete_from_kindle(file_id)
     if success:
         return jsonify({'success': True, 'message': message})
     return jsonify({'success': False, 'message': message}), 400

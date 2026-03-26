@@ -33,11 +33,14 @@ except ImportError:
     HAS_PYGMENTS = False
 
 # Windows 编码修复
-if sys.platform == 'win32':
+# 注意：MCP server 通过 stdin/stdout 通信，不能重定向 stdout
+# 通过环境变量 TOKINDLE_MCP_MODE 检测 MCP 环境
+if sys.platform == 'win32' and not os.environ.get('TOKINDLE_MCP_MODE'):
     import codecs
-
-    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
-    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
+    if hasattr(sys.stdout, 'buffer'):
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
+    if hasattr(sys.stderr, 'buffer'):
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
     os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 
