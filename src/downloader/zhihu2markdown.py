@@ -434,15 +434,28 @@ class ZhihuToMarkdown:
         for span in soup.find_all('span', class_='math-holder'):
             latex = span.get_text().strip()
             if latex:
-                # 判断是否在块级元素中（通过检查父元素）
-                parent = span.find_parent(['p', 'div'])
-                is_block = parent and len(parent.get_text().strip()) == len(span.get_text().strip()) + len(parent.find('span', class_='math-holder').get_text().strip() if parent.find('span', class_='math-holder') else '')
-                # 简单判断：如果前面是换行或段落开始，视为块级
-                is_block = span.find_previous_sibling() is None or span.find_previous_sibling().name in ['br', 'div']
-                if is_block:
-                    span.replace_with(f'\n$$\n{latex}\n$$\n')
+                # 判断是行内还是块级：检查前后是否有非空白文本
+                # 获取父元素的直接文本内容
+                parent = span.find_parent(['p', 'div', 'span'])
+                if parent:
+                    # 获取父元素中公式前后的文本
+                    parent_text = parent.get_text()
+                    # 找到公式在父元素文本中的位置
+                    span_text = span.get_text()
+                    # 简单判断：检查公式前后是否有其他非空白内容
+                    # 使用字符串分割来判断
+                    parts = parent_text.split(span_text)
+                    has_text_before = parts[0].strip() if parts else False
+                    has_text_after = parts[1].strip() if len(parts) > 1 else False
+                    # 如果前后都有文字，或者父元素文本不只是公式，则为行内公式
+                    is_inline = bool(has_text_before or has_text_after)
                 else:
+                    is_inline = True  # 默认行内
+
+                if is_inline:
                     span.replace_with(f'${latex}$')
+                else:
+                    span.replace_with(f'\n$$\n{latex}\n$$\n')
             else:
                 span.decompose()
 
