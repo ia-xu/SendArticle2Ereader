@@ -170,10 +170,16 @@ def _upload_local_file_sync(file_path: str, custom_title: str = None, custom_aut
                     extracted_author = author_match.group(1).strip().strip('"\'')
 
         # 或者从第一个 # 标题提取
+        # 但如果文件名有编号前缀（如 01-、02-），保留文件名作为标题
         if extracted_title == src_path.stem:
-            first_title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
-            if first_title_match:
-                extracted_title = first_title_match.group(1).strip()
+            # 检查文件名是否有编号前缀
+            if re.match(r'^\d+[-_]?', src_path.stem):
+                # 保留文件名中的编号
+                pass
+            else:
+                first_title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+                if first_title_match:
+                    extracted_title = first_title_match.group(1).strip()
 
         title = custom_title or extracted_title
         author = custom_author or extracted_author
