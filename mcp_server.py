@@ -138,6 +138,121 @@ def _convert_to_kfx(file_id: str, md_path: Path, title: str, author: str) -> dic
     return result
 
 
+def _upload_local_file_sync(file_path: str, custom_title: str = None, custom_author: str = None) -> dict:
+    """上传本地 Markdown 文件（同步）"""
+    try:
+        src_path = Path(file_path)
+        if not src_path.exists():
+            return {"success": False, "error": f"文件不存在: {file_path}"}
+
+        if src_path.suffix.lower() not in ['.md', '.markdown']:
+            return {"success": False, "error": "只支持 Markdown 文件 (.md 或 .markdown)"}
+
+        file_id = str(uuid.uuid4())[:8]
+
+        # 从文件名或内容提取标题
+        content = src_path.read_text(encoding='utf-8')
+
+        # 尝试从 YAML frontmatter 提取标题和作者
+        import re
+        extracted_title = src_path.stem
+        extracted_author = 'Unknown'
+
+        if content.startswith('---'):
+            frontmatter_match = re.search(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+            if frontmatter_match:
+                frontmatter = frontmatter_match.group(1)
+                title_match = re.search(r'^title:\s*(.+)$', frontmatter, re.MULTILINE)
+                if title_match:
+                    extracted_title = title_match.group(1).strip().strip('"\'')
+                author_match = re.search(r'^author:\s*(.+)$', frontmatter, re.MULTILINE)
+                if author_match:
+                    extracted_author = author_match.group(1).strip().strip('"\'')
+
+        # 或者从第一个 # 标题提取
+        if extracted_title == src_path.stem:
+            first_title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+            if first_title_match:
+                extracted_title = first_title_match.group(1).strip()
+
+        title = custom_title or extracted_title
+        author = custom_author or extracted_author
+
+        # 复制文件到 uploads 目录
+        md_path = UPLOAD_FOLDER / f"{file_id}.md"
+        shutil.copy2(str(src_path), str(md_path))
+
+        # 复制关联的 images 目录（如果存在）
+        src_images_dir = src_path.parent / 'images'
+        if src_images_dir.exists() and src_images_dir.is_dir():
+            dest_images_dir = UPLOAD_FOLDER / f"{file_id}_images"
+            if dest_images_dir.exists():
+                shutil.rmtree(dest_images_dir)
+            shutil.copytree(src_images_dir, dest_images_dir)
+
+        # 更新数据库
+        file_info = {
+            'name': title,
+            'original_name': src_path.name,
+            'author': author,
+            'upload_time': datetime.now().isoformat(),
+            'status': 'uploaded',
+            'source': 'upload',
+            'source_url': str(src_path.absolute())
+        }
+        update_file_info(file_id, file_info)
+
+        # 转换为 KFX/EPUB
+        convert_result = _convert_to_kfx(file_id, md_path, title, author)
+        file_info.update(convert_result)
+        update_file_info(file_id, file_info)
+
+        return {
+            "success": True,
+            "file_id": file_id,
+            "title": title,
+            "author": author,
+            "source": "upload",
+            "original_path": str(src_path.absolute()),
+            "has_kfx": convert_result.get('has_kfx', False),
+            "has_epub": convert_result.get('has_epub', False),
+            "status": convert_result.get('status', 'uploaded'),
+            "message": "上传并转换成功"
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _upload_local_files_sync(file_paths: list[str], titles: list[str] = None, authors: list[str] = None) -> dict:
+    """批量上传本地 Markdown 文件（同步）"""
+    if not file_paths:
+        return {"success": False, "error": "文件路径列表不能为空"}
+
+    results = []
+    success_count = 0
+    failed_count = 0
+
+    for i, file_path in enumerate(file_paths):
+        title = titles[i] if titles and i < len(titles) else None
+        author = authors[i] if authors and i < len(authors) else None
+        result = _upload_local_file_sync(file_path, title, author)
+        results.append(result)
+        if result.get("success"):
+            success_count += 1
+        else:
+            failed_count += 1
+
+    return {
+        "success": True,
+        "total": len(file_paths),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "results": results,
+        "message": f"完成 {success_count}/{len(file_paths)} 个文件上传转换"
+    }
+
+
 def _download_zhihu_sync(url: str, custom_title: str = None, custom_author: str = None) -> dict:
     """知乎下载（同步）"""
     if not ZHIHU_AVAILABLE:
@@ -493,6 +608,38 @@ async def download_and_convert(
         result = {"success": False, "error": "不支持的 URL 类型"}
 
     return result
+
+
+@mcp.tool()
+def upload_local_file(
+    file_path: str,
+    title: Optional[str] = None,
+    author: Optional[str] = None
+) -> dict:
+    """上传本地 Markdown 文件并转换为 KFX/EPUB 格式。支持从文件名或内容自动提取标题。
+
+    Args:
+        file_path: 本地 Markdown 文件的绝对路径
+        title: 自定义标题(可选，默认从文件名或内容提取)
+        author: 自定义作者(可选，默认为 Unknown 或从 frontmatter 提取)
+    """
+    return _upload_local_file_sync(file_path, title, author)
+
+
+@mcp.tool()
+def batch_upload_local_files(
+    file_paths: list[str],
+    titles: Optional[list[str]] = None,
+    authors: Optional[list[str]] = None
+) -> dict:
+    """批量上传本地 Markdown 文件并转换为 KFX/EPUB 格式。
+
+    Args:
+        file_paths: 本地 Markdown 文件路径列表
+        titles: 自定义标题列表(可选，与 file_paths 一一对应)
+        authors: 自定义作者列表(可选，与 file_paths 一一对应)
+    """
+    return _upload_local_files_sync(file_paths, titles, authors)
 
 
 @mcp.tool()
