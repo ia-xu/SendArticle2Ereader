@@ -453,6 +453,14 @@ class ZhihuToMarkdown:
                 # 如果还有其他文字内容，就是行内公式
                 is_inline = bool(remaining_text)
 
+            # 如果 latex 本身带有 $$ 或 $ 标记，用它覆盖 inline/block 判断
+            if latex.startswith('$$') and latex.endswith('$$'):
+                latex = latex[2:-2].strip()
+                is_inline = False
+            elif latex.startswith('$') and latex.endswith('$'):
+                latex = latex[1:-1].strip()
+                is_inline = True
+
             if is_inline:
                 span.replace_with(f'${latex}$')
             else:
@@ -490,6 +498,14 @@ class ZhihuToMarkdown:
                 # 如果前后有文字，是行内公式
                 is_inline = has_text_before or has_text_after
 
+                # 如果 latex 本身带有 $$ 或 $ 标记，用它覆盖 inline/block 判断
+                if latex.startswith('$$') and latex.endswith('$$'):
+                    latex = latex[2:-2].strip()
+                    is_inline = False
+                elif latex.startswith('$') and latex.endswith('$'):
+                    latex = latex[1:-1].strip()
+                    is_inline = True
+
                 if is_inline:
                     span.replace_with(f'${latex}$')
                 else:
@@ -516,6 +532,14 @@ class ZhihuToMarkdown:
 
                     # 判断是行内公式还是块级公式
                     is_inline = self._is_inline_formula(img)
+
+                    # 如果 latex 本身带有 $$ 或 $ 标记，用它覆盖 inline/block 判断
+                    if latex.startswith('$$') and latex.endswith('$$'):
+                        latex = latex[2:-2].strip()
+                        is_inline = False
+                    elif latex.startswith('$') and latex.endswith('$'):
+                        latex = latex[1:-1].strip()
+                        is_inline = True
 
                     if is_inline:
                         # 行内公式：使用单美元符号
