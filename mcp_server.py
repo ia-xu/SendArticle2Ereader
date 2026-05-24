@@ -32,6 +32,12 @@ from typing import Literal, Optional
 # 设置 MCP 模式环境变量，避免 md2kfx 重定向 stdout
 os.environ['TOKINDLE_MCP_MODE'] = '1'
 
+# stdio 模式下 stdout 只能输出 JSONRPC 消息，任何 print() 都会污染协议流。
+# 将 builtins.print 重定向到 stderr，确保所有调试/状态输出不干扰 MCP 通信。
+import builtins as _builtins
+_original_print = _builtins.print
+_builtins.print = lambda *a, **kw: _original_print(*a, **{**kw, 'file': sys.stderr})
+
 # Windows stdio fix: MCP SDK 1.27.x 在 Windows 管道模式下
 # TextIOWrapper(sys.stdout.buffer) 会崩溃，因为 BufferedWriter 没有 .buffer 属性。
 # 在 import MCP SDK 之前，先缓存 raw streams 并 monkey-patch stdio_server 函数。
@@ -41,8 +47,11 @@ if sys.platform == 'win32':
     from contextlib import asynccontextmanager as _acm
 
     # 在模块顶层缓存 raw file descriptors（asyncio 上下文中访问 sys.stdout.buffer 会崩溃）
-    _stdout_raw_fd = sys.__stdout__.buffer.raw  # FileIO(1, 'wb')
-    _stdin_raw_fd = sys.__stdin__.buffer.raw    # FileIO(0, 'rb')
+    # PyCharm 调试模式下 buffer 已经是 FileIO，没有 .raw 属性
+    _stdout_buf = sys.__stdout__.buffer
+    _stdout_raw_fd = _stdout_buf.raw if hasattr(_stdout_buf, 'raw') else _stdout_buf
+    _stdin_buf = sys.__stdin__.buffer
+    _stdin_raw_fd = _stdin_buf.raw if hasattr(_stdin_buf, 'raw') else _stdin_buf
 
     @_acm
     async def _stdio_server_win32(stdin=None, stdout=None):

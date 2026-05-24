@@ -1078,12 +1078,12 @@ class WeChatToMarkdown:
         for pre in soup.find_all(['pre', 'section']):
             # 微信代码块特征：通常带有 code-snippet__js 等 class
             # 或者是 mdnice编辑器 格式 (data-tool="mdnice编辑器")
-            is_code = 'code-snippet' in str(pre.get('class', '')) or pre.name == 'pre'
+            is_code = 'code-snippet' in str(pre.get('class', '')) or pre.name == 'pre' or pre.get('data-code-block') is not None
             if not is_code:
                 continue
 
             # 检测是否为 mdnice编辑器 格式
-            is_mdnice = pre.get('data-tool') == 'mdnice编辑器'
+            is_mdnice = pre.get('data-tool') == 'mdnice编辑器' or pre.get('data-code-block') is not None
 
             # 尝试定位真正的代码容器
             code_tag = pre.find('code')
