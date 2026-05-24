@@ -2,6 +2,34 @@
 
 将网络文章转换为墨水屏阅读器友好格式的工具集。
 
+> **2026-05-24 更新**：MCP Server 已支持 **stdio 传输模式**，可接入任何兼容 MCP stdio 协议的 AI Agent 框架。
+>
+> 以 Hermes Agent 为例，在 `~/.hermes/config.yaml`（Windows 为 `%AppData%\Local\hermes\config.yaml`）中配置：
+>
+> ```yaml
+> mcp_servers:
+>   tokindle:
+>     command: /path/to/your/python       # Python 解释器绝对路径
+>     args:
+>       - /path/to/tokindle/mcp_server.py  # 项目 mcp_server.py 的绝对路径
+>       - --transport
+>       - stdio
+> ```
+>
+> 配置完成后重启 Agent，即可在对话中直接调用 tokindle 的下载、转换、推送 Kindle 等工具。
+>
+> **使用示例（直接在对话中说即可，无需手动调用工具）：**
+>
+> - 下载文章：`帮我下载这篇微信文章 https://mp.weixin.qq.com/s/xxx`
+> - 下载并导入 Kindle：`下载这篇知乎文章并推送到 Kindle https://zhuanlan.zhihu.com/p/xxx`
+> - 批量下载：`批量下载这几篇：url1, url2, url3`
+> - 查看 Kindle 连接状态：`检查 Kindle 是否已连接`
+> - 推送指定文件：`把文件 abc123 推送到 Kindle`
+>
+> Agent 会自动识别意图并调用对应 MCP 工具，无需记忆工具名称。
+>
+> sse 配置方式见下方 [MCP Server 配置与调试指南](#-mcp-server-配置与调试指南)。
+
 - 支持通过页面下载、转换、导入文章到 kindle
 
 ![img.png](articles/img.png)
