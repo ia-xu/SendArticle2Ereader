@@ -3,12 +3,16 @@ MCP Server for tokindle - Markdown to Kindle KFX Converter
 
 使用 FastMCP 简化实现。
 
-Claude Desktop 配置示例 (claude_desktop_config.json):
+启动方式:
+  - SSE 模式 (默认):  python mcp_server.py
+  - stdio 模式:        python mcp_server.py --transport stdio
+
+Claude Desktop 自启动配置示例 (claude_desktop_config.json):
 {
   "mcpServers": {
     "tokindle": {
       "command": "literal:/path/to/your/python",
-      "args": ["literal:/path/to/tokindle/mcp_server.py"],
+      "args": ["literal:/path/to/tokindle/mcp_server.py", "--transport", "stdio"],
       "env": {}
     }
   }
@@ -19,6 +23,7 @@ import sys
 import json
 import uuid
 import shutil
+import argparse
 import asyncio
 from pathlib import Path
 from datetime import datetime
@@ -27,12 +32,71 @@ from typing import Literal, Optional
 # 设置 MCP 模式环境变量，避免 md2kfx 重定向 stdout
 os.environ['TOKINDLE_MCP_MODE'] = '1'
 
+# Windows stdio fix: MCP SDK 1.27.x 在 Windows 管道模式下
+# TextIOWrapper(sys.stdout.buffer) 会崩溃，因为 BufferedWriter 没有 .buffer 属性。
+# 在 import MCP SDK 之前，先缓存 raw streams 并 monkey-patch stdio_server 函数。
+if sys.platform == 'win32':
+    import io as _io
+    import anyio as _anyio
+    from contextlib import asynccontextmanager as _acm
+
+    # 在模块顶层缓存 raw file descriptors（asyncio 上下文中访问 sys.stdout.buffer 会崩溃）
+    _stdout_raw_fd = sys.__stdout__.buffer.raw  # FileIO(1, 'wb')
+    _stdin_raw_fd = sys.__stdin__.buffer.raw    # FileIO(0, 'rb')
+
+    @_acm
+    async def _stdio_server_win32(stdin=None, stdout=None):
+        if not stdin:
+            _buf_in = _io.BufferedReader(_stdin_raw_fd)
+            stdin = _anyio.wrap_file(_io.TextIOWrapper(_buf_in, encoding='utf-8', errors='replace'))
+        if not stdout:
+            _buf_out = _io.BufferedWriter(_stdout_raw_fd)
+            stdout = _anyio.wrap_file(_io.TextIOWrapper(_buf_out, encoding='utf-8'))
+
+        _rs_writer, _rs = _anyio.create_memory_object_stream(0)
+        _ws, _ws_reader = _anyio.create_memory_object_stream(0)
+
+        async def _reader():
+            try:
+                async with _rs_writer:
+                    async for line in stdin:
+                        try:
+                            msg = __import__('mcp.types', fromlist=['JSONRPCMessage']).JSONRPCMessage.model_validate_json(line)
+                        except Exception as exc:
+                            await _rs_writer.send(exc)
+                            continue
+                        await _rs_writer.send(__import__('mcp.shared.session', fromlist=['SessionMessage']).SessionMessage(msg))
+            except _anyio.ClosedResourceError:
+                await _anyio.lowlevel.checkpoint()
+
+        async def _writer():
+            try:
+                async with _ws_reader:
+                    async for sm in _ws_reader:
+                        j = sm.message.model_dump_json(by_alias=True, exclude_none=True)
+                        await stdout.write(j + '\n')
+                        await stdout.flush()
+            except _anyio.ClosedResourceError:
+                await _anyio.lowlevel.checkpoint()
+
+        async with _anyio.create_task_group() as tg:
+            tg.start_soon(_reader)
+            tg.start_soon(_writer)
+            yield _rs, _ws
+
 # 确保项目路径在 sys.path 中
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT / 'src'))
 sys.path.insert(0, str(PROJECT_ROOT / 'src' / 'downloader'))
 
 from mcp.server.fastmcp import FastMCP
+
+# 应用 Windows stdio patch
+if sys.platform == 'win32':
+    import mcp.server.stdio
+    mcp.server.stdio.stdio_server = _stdio_server_win32
+    import mcp.server.fastmcp.server as _fmcp_mod
+    _fmcp_mod.stdio_server = _stdio_server_win32
 
 # 导入配置和工具
 from src.config import (
@@ -786,4 +850,12 @@ def delete_file(file_id: str, remove_from_kindle: bool = False) -> dict:
 
 
 if __name__ == "__main__":
-    mcp.run(transport='sse')
+    parser = argparse.ArgumentParser(description="MCP Server for tokindle")
+    parser.add_argument(
+        "--transport",
+        choices=["sse", "stdio"],
+        default="sse",
+        help="Transport protocol: sse (HTTP, default) or stdio (for AI agent auto-launch)"
+    )
+    args = parser.parse_args()
+    mcp.run(transport=args.transport)

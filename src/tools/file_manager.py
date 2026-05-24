@@ -166,11 +166,18 @@ def delete_file_complete(file_id: str, remove_from_kindle: bool = False) -> Dict
                 file_path.unlink()
                 deleted_items.append(str(file_path))
 
-    # 删除 images 目录
+    # 删除 images 目录（upload 模式：{file_id}_images 独立目录）
     images_dir = UPLOAD_FOLDER / f"{file_id}_images"
     if images_dir.exists():
         shutil.rmtree(images_dir)
         deleted_items.append(str(images_dir))
+
+    # 删除共享 images 目录下的图片（wechat 模式：images/{file_id}_*）
+    shared_images_dir = UPLOAD_FOLDER / 'images'
+    if shared_images_dir.exists():
+        for img_file in shared_images_dir.glob(f"{file_id}_*"):
+            img_file.unlink()
+            deleted_items.append(str(img_file))
 
     # 从数据库删除
     delete_file_from_db(file_id)
