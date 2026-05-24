@@ -388,7 +388,7 @@ if __name__ == "__main__":
 使用绝对路径添加服务：
 
 ```bash
-/mcp add python literal:/path/to/tokindle/mcp_server.py
+/mcp add python /path/to/tokindle/mcp_server.py
 ```
 
 对应的配置文件内容如下：
@@ -397,7 +397,7 @@ if __name__ == "__main__":
 "tokindle": {
   "type": "stdio",
   "command": "python",
-  "args": ["literal:/path/to/tokindle/mcp_server.py"]
+  "args": ["/path/to/tokindle/mcp_server.py"]
 }
 ```
 
@@ -426,14 +426,14 @@ if __name__ == "__main__":
   "mcpServers": {
     "tokindle": {
       "command": "python",
-      "args": ["literal:/path/to/tokindle/mcp_server.py"],
+      "args": ["/path/to/tokindle/mcp_server.py"],
       "env": {}
     }
   }
 }
 ```
 
-> 注意：将 `literal:/path/to/tokindle/mcp_server.py` 替换为你的实际项目路径。
+> 注意：将 `/path/to/tokindle/mcp_server.py` 替换为你的实际项目路径。
 
 3. 重启 Claude Desktop，即可在对话中使用 tokindle 的功能。
 

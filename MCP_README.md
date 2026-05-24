@@ -9,7 +9,7 @@
 **SSE 模式**（默认，HTTP 长连接，适合调试和远程调用）：
 
 ```bash
-literal:/path/to/your/python mcp_server.py
+python mcp_server.py
 ```
 
 服务监听 `127.0.0.1:48000`。
@@ -17,7 +17,7 @@ literal:/path/to/your/python mcp_server.py
 **stdio 模式**（标准输入输出，适合 AI agent 自启动）：
 
 ```bash
-literal:/path/to/your/python mcp_server.py --transport stdio
+python mcp_server.py --transport stdio
 ```
 
 ### 配置 AI Agent 自启动
@@ -28,8 +28,8 @@ literal:/path/to/your/python mcp_server.py --transport stdio
 {
   "mcpServers": {
     "tokindle": {
-      "command": "literal:/path/to/your/python",
-      "args": ["literal:/path/to/tokindle/mcp_server.py", "--transport", "stdio"],
+      "command": "/path/to/your/python",
+      "args": ["/path/to/tokindle/mcp_server.py", "--transport", "stdio"],
       "env": {}
     }
   }
