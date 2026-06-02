@@ -20,7 +20,7 @@ from typing import Optional, Tuple, Dict, List
 
 import requests
 from bs4 import BeautifulSoup
-from tqdm.contrib.concurrent import thread_map
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Windows 编码修复
 if sys.platform == 'win32':
@@ -621,10 +621,15 @@ class WeChatToMarkdown:
                 return (url, f"images/{filename}")
             return (url, url)
 
-        # 使用 thread_map 并行下载，最大 4 线程
-        results = thread_map(download_one, download_tasks, max_workers=4, desc="Downloading images", disable=len(download_tasks) <= 1)
+# 使用 ThreadPoolExecutor 并行下载，最大 4 线程
+        results = {}
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(download_one, task): task for task in download_tasks}
+            for future in as_completed(futures):
+                url, local_path = future.result()
+                results[url] = local_path
 
-        return dict(results)
+        return results
 
     def _svg_to_latex(self, svg) -> Optional[str]:
         """
