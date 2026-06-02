@@ -38,7 +38,7 @@ def save_user_config(config):
         json.dump(config, f, ensure_ascii=False, indent=2)
 
 # 阅读器配置
-KINDLE_ARTICLE_PATH = Path("E:/documents/Downloads/Items01/article")
+KINDLE_ARTICLE_PATH = Path("F:/documents/Downloads/Items01/article")
 # KINDLE_ARTICLE_PATH = Path(r'Z:\documents\Downloads\Items01\article')
 # Cookie 文件路径
 ZHIHU_COOKIE_FILE = BASE_DIR / 'config' / 'zhihu_cookies.json'

@@ -13,7 +13,7 @@ import requests
 from pathlib import Path
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
-from tqdm.contrib.concurrent import thread_map
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 图片处理库
 try:
@@ -86,12 +86,19 @@ class MarkdownToKFX:
         if not urls:
             return {}
 
+
         def download_one(url):
             local_path = self.download_image(url)
             return (url, local_path)
 
-        results = thread_map(download_one, urls, max_workers=4, desc="Downloading images", disable=len(urls) <= 1)
-        return {url: path for url, path in results if path is not None}
+        results = {}
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(download_one, url): url for url in urls}
+            for future in as_completed(futures):
+                url, local_path = future.result()
+                if local_path is not None:
+                    results[url] = local_path
+        return results
 
     def convert_image_for_kindle(self, src_path, dest_dir):
         """转换图片为 Kindle 兼容格式（GIF/WebP -> PNG）"""
