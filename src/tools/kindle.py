@@ -7,8 +7,11 @@ import shutil
 from pathlib import Path
 from typing import Tuple, List, Set
 
-from src.config import OUTPUT_FOLDER, KINDLE_ARTICLE_PATH
+from src.config import OUTPUT_FOLDER, KINDLE_ARTICLE_PATH as _INIT_KINDLE_PATH
 from src.tools.database import get_file_info
+
+# 模块级变量，可被 config.set_kindle_path() 动态更新
+KINDLE_ARTICLE_PATH = _INIT_KINDLE_PATH
 
 
 def check_kindle_connected() -> bool:

@@ -111,7 +111,7 @@ if sys.platform == 'win32':
 from src.config import (
     BASE_DIR, UPLOAD_FOLDER, OUTPUT_FOLDER,
     ZHIHU_COOKIE_FILE, WECHAT_COOKIE_FILE, KINDLE_ARTICLE_PATH,
-    load_user_config
+    load_user_config, get_kindle_path, set_kindle_path
 )
 from src.md2kfx import MarkdownToKFX
 from src.tools.database import update_file_info
@@ -562,12 +562,39 @@ def _download_arxiv_sync(url: str, custom_title: str = None, custom_author: str 
 @mcp.tool()
 def check_kindle_connection() -> dict:
     """检查墨水屏阅读器(Kindle)是否已连接到电脑"""
-    connected = check_kindle_connected()
+    current_path = get_kindle_path()
+    connected = current_path.exists()
     return {
         "connected": connected,
-        "device_path": str(KINDLE_ARTICLE_PATH) if connected else None,
+        "device_path": str(current_path) if connected else None,
         "message": "墨水屏阅读器已连接" if connected else "墨水屏阅读器未连接"
     }
+
+
+@mcp.tool()
+def config_upload_path(upload_path: str) -> dict:
+    """动态修改 Kindle 的上传路径，无需重启 MCP 服务器即可生效。
+
+    Args:
+        upload_path: 新的 Kindle 上传路径（绝对路径），如 "F:/documents/Downloads/Items01/article" 或 "E:/documents/Downloads/Items01/article"
+    """
+    upload_path = upload_path.strip()
+    if not upload_path:
+        return {"success": False, "error": "上传路径不能为空"}
+
+    try:
+        old_path = str(get_kindle_path())
+        new_path_obj = set_kindle_path(upload_path)
+        connected = new_path_obj.exists()
+        return {
+            "success": True,
+            "old_path": old_path,
+            "new_path": str(new_path_obj),
+            "connected": connected,
+            "message": f"上传路径已更新为 {new_path_obj}" + ("，设备已连接" if connected else "，设备未连接（路径目录已创建但阅读器可能未挂载）")
+        }
+    except Exception as e:
+        return {"success": False, "error": f"更新路径失败: {str(e)}"}
 
 
 async def _download_single_async(url: str, title: Optional[str] = None, author: Optional[str] = None) -> dict:
@@ -786,13 +813,14 @@ def delete_from_kindle(file_id: str) -> dict:
 @mcp.tool()
 def list_kindle_files() -> dict:
     """列出墨水屏阅读器(Kindle)上所有的 KFX/EPUB 文件"""
-    if not check_kindle_connected():
+    current_path = get_kindle_path()
+    if not current_path.exists():
         return {"success": False, "error": "墨水屏阅读器未连接"}
 
     kindle_files = get_kindle_files()
     return {
         "success": True,
-        "device_path": str(KINDLE_ARTICLE_PATH),
+        "device_path": str(current_path),
         "files": list(kindle_files),
         "total": len(kindle_files)
     }

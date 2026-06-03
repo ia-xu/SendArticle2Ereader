@@ -37,9 +37,35 @@ def save_user_config(config):
     with open(USER_CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
-# 阅读器配置
-KINDLE_ARTICLE_PATH = Path("F:/documents/Downloads/Items01/article")
-# KINDLE_ARTICLE_PATH = Path(r'Z:\documents\Downloads\Items01\article')
+# 阅读器配置 - 默认路径，可通过 set_kindle_path() 动态修改
+_DEFAULT_KINDLE_PATH = Path("F:/documents/Downloads/Items01/article")
+
+# 启动时从 user_config.json 恢复上次保存的路径
+_KINDLE_ARTICLE_PATH = Path(load_user_config().get('kindle_upload_path', str(_DEFAULT_KINDLE_PATH)))
+
+def get_kindle_path() -> Path:
+    """获取当前 Kindle 上传路径"""
+    return _KINDLE_ARTICLE_PATH
+
+def set_kindle_path(new_path: str) -> Path:
+    """动态修改 Kindle 上传路径（无需重启 MCP）"""
+    global _KINDLE_ARTICLE_PATH
+    p = Path(new_path)
+    # 确保路径存在
+    if not p.exists():
+        p.mkdir(parents=True, exist_ok=True)
+    _KINDLE_ARTICLE_PATH = p
+    # 同步更新 kindle.py 模块中的引用
+    import src.tools.kindle as _kindle_mod
+    _kindle_mod.KINDLE_ARTICLE_PATH = p
+    # 持久化到 user_config.json，重启后也能记住
+    config = load_user_config()
+    config['kindle_upload_path'] = str(p)
+    save_user_config(config)
+    return p
+
+# 向后兼容：模块级属性 KINDLE_ARTICLE_PATH 也指向同一对象
+KINDLE_ARTICLE_PATH = _KINDLE_ARTICLE_PATH
 # Cookie 文件路径
 ZHIHU_COOKIE_FILE = BASE_DIR / 'config' / 'zhihu_cookies.json'
 WECHAT_COOKIE_FILE = BASE_DIR / 'config' / 'wechat_cookies.json'
