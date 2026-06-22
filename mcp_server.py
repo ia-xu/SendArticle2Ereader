@@ -23,6 +23,7 @@ import sys
 import json
 import uuid
 import shutil
+import threading
 import argparse
 import asyncio
 from pathlib import Path
@@ -211,6 +212,22 @@ def _convert_to_kfx(file_id: str, md_path: Path, title: str, author: str) -> dic
     return result
 
 
+def _convert_to_kfx_background(file_id: str, md_path: Path, title: str, author: str) -> dict:
+    """后台线程执行 KFX 转换，立即返回占位结果。转换完成后自动更新数据库。"""
+    def _worker():
+        try:
+            convert_result = _convert_to_kfx(file_id, md_path, title, author)
+            if convert_result.get('convert_error'):
+                convert_result['status'] = 'convert_failed'
+            update_file_info(file_id, convert_result)
+        except Exception as e:
+            update_file_info(file_id, {'convert_error': str(e), 'status': 'convert_failed'})
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    return {'status': 'uploaded', 'has_kfx': False, 'has_epub': False}
+
+
 def _upload_local_file_sync(file_path: str, custom_title: str = None, custom_author: str = None) -> dict:
     """上传本地 Markdown 文件（同步）"""
     try:
@@ -282,7 +299,7 @@ def _upload_local_file_sync(file_path: str, custom_title: str = None, custom_aut
         update_file_info(file_id, file_info)
 
         # 转换为 KFX/EPUB
-        convert_result = _convert_to_kfx(file_id, md_path, title, author)
+        convert_result = _convert_to_kfx_background(file_id, md_path, title, author)
         file_info.update(convert_result)
         update_file_info(file_id, file_info)
 
@@ -392,7 +409,7 @@ def _download_zhihu_sync(url: str, custom_title: str = None, custom_author: str 
         }
         update_file_info(file_id, file_info)
 
-        convert_result = _convert_to_kfx(file_id, md_path, title, author)
+        convert_result = _convert_to_kfx_background(file_id, md_path, title, author)
         file_info.update(convert_result)
         update_file_info(file_id, file_info)
 
@@ -466,7 +483,7 @@ def _download_wechat_sync(url: str, custom_title: str = None, custom_author: str
         }
         update_file_info(file_id, file_info)
 
-        convert_result = _convert_to_kfx(file_id, md_path, title, author)
+        convert_result = _convert_to_kfx_background(file_id, md_path, title, author)
         file_info.update(convert_result)
         update_file_info(file_id, file_info)
 
@@ -537,7 +554,7 @@ def _download_arxiv_sync(url: str, custom_title: str = None, custom_author: str 
         }
         update_file_info(file_id, file_info)
 
-        convert_result = _convert_to_kfx(file_id, md_path, title, author)
+        convert_result = _convert_to_kfx_background(file_id, md_path, title, author)
         file_info.update(convert_result)
         update_file_info(file_id, file_info)
 

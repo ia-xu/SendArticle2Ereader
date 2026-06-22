@@ -65,12 +65,14 @@ AI agent 会自动启动该进程，通过 stdin/stdout 的 JSON-RPC 协议通�
   "title": "文章标题",
   "author": "作者名",
   "source": "zhihu",
-  "has_kfx": true,
-  "has_epub": true,
-  "status": "converted",
-  "message": "下载并转换成功"
+  "has_kfx": false,
+  "has_epub": false,
+  "status": "uploaded",
+  "message": "上传成功，转换正在后台进行"
 }
 ```
+
+> **注意**：转换在后台线程异步执行，调用立即返回。需通过 `get_file_info(file_id)` 轮询转换状态，直到 `status` 变为 `converted`（或 `convert_failed`）后再调用 `send_to_kindle`。详见下方「异步转换流程」一节。
 
 #### `batch_download_and_convert`
 
@@ -117,7 +119,7 @@ AI agent 会自动启动该进程，通过 stdin/stdout 的 JSON-RPC 协议通�
 
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `status` | `str` | 无 | 按状态过滤：`uploaded` / `converted` / `converted_epub` |
+| `status` | `str` | 无 | 按状态过滤：`uploaded`（已上传/转换中）/ `converted`（已转换）/ `converted_epub`（仅 EPUB）/ `convert_failed`（转换失败） |
 | `source` | `str` | 无 | 按来源过滤：`zhihu` / `wechat` / `arxiv` / `upload` |
 | `limit` | `int` | `50` | 最大返回条数，`0` 不限制 |
 
@@ -192,15 +194,37 @@ AI agent 会自动启动该进程，通过 stdin/stdout 的 JSON-RPC 协议通�
 
 每个文件在系统中获得一个 8 位 UUID 作为唯一标识（`file_id`）。
 
-### 2. 格式转换
+### 2. 格式转换（异步后台执行）
 
-获取到 Markdown 文件后，`MarkdownToKFX` 转换器接手：
+获取到 Markdown 文件后，`MarkdownToKFX` 转换器在后台线程中执行：
 
 1. 解析 Markdown 中的图片引用、表格、公式（LaTeX）
 2. 使用 Calibre 的 `ebook-convert` 生成 EPUB，再通过 Kindle Previewer 转为 KFX
 3. 如果用户配置中启用了 EPUB 支持（`enable_epub_support`，默认开启），同时保留一份 EPUB 副本
 
-转换结果写入 `output/` 目录，状态更新到 `database.json`。
+转换完成后自动更新 `database.json` 中的状态字段。`file_id` 的 `status` 字段会经历以下转换：
+
+```
+uploaded → converted          （转换成功）
+         → converted_epub     （转换成功，仅生成 EPUB）
+         → convert_failed     （转换失败，convert_error 字段记录错误信息）
+```
+
+### 异步转换流程
+
+由于 KFX 转换可能耗时数分钟（取决于文章长度和图片数量），所有上传/下载操作均采用异步模式：
+
+```
+1. 调用 upload_local_file / download_and_convert
+   → 立即返回 file_id, status='uploaded'
+
+2. 轮询 get_file_info(file_id)
+   → status='uploaded'    → 仍在转换，继续等待
+   → status='converted'   → 转换成功，可以推送
+   → status='convert_failed' → 转换失败，查看 convert_error 字段
+
+3. 调用 send_to_kindle(file_id)
+```
 
 ### 3. 文件管理
 

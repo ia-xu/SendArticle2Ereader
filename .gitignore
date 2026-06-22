@@ -9,3 +9,4 @@ images
 settings.local.json
 __pycache__
 database/*.md
+misc/wdk-skills

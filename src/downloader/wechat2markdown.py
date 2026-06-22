@@ -1019,15 +1019,23 @@ class WeChatToMarkdown:
         latex = latex.replace('\u200b', '').replace('\xa0', ' ')
         latex = latex.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
 
-        # 2. 核心逻辑：给比较运算符和算子前后加空格 (针对你的 i < j 发现)
+        # 2. 将颜色命令替换为 \boldsymbol（Kindle 等渲染器不支持 xcolor，用粗体保留强调语义）
+        # \textcolor{red}{\theta} → \boldsymbol{\theta}  （带花括号参数）
+        latex = re.sub(r'\\textcolor\{[^}]*\}\{([^}]*)\}', r'\\boldsymbol{\1}', latex)
+        # \textcolor{red}\theta → \boldsymbol{\theta}  （颜色命令后直接跟命令，无花括号包裹）
+        latex = re.sub(r'\\textcolor\{[^}]*\}(\\[a-zA-Z]+)', r'\\boldsymbol{\1}', latex)
+        # \color{red} → 移除（作用域型颜色设置，无法确定包裹范围，直接移除）
+        latex = re.sub(r'\\color\{[^}]*\}', '', latex)
+
+        # 3. 核心逻辑：给比较运算符和算子前后加空格 (针对你的 i < j 发现)
         # 匹配 <, >, = 但排除已经被转义的情况（如 \<）
         latex = re.sub(r'(?<!\\)([<>=])', r' \1 ', latex)
 
-        # 3. 修复 LaTeX 命令后的粘连（如 \alpha_{t} 变为 \alpha _{t}）
+        # 4. 修复 LaTeX 命令后的粘连（如 \alpha_{t} 变为 \alpha _{t}）
         # 如果反斜杠命令后直接跟了下划线或字母，加个空格隔离
         latex = re.sub(r'(\\[a-zA-Z]+)([_^])', r'\1 \2', latex)
 
-        # 4. 压缩多余空格并返回
+        # 5. 压缩多余空格并返回
         return re.sub(r'\s+', ' ', latex).strip()
 
     def _process_wechat_elements(self, soup):
