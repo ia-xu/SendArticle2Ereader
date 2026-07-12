@@ -375,9 +375,11 @@ class MarkdownToKFX:
         content = re.sub(r'(?<!\$)\$(?!\$)[^$]*\$\$[^$]*\$(?!\$)', fix_mixed_formula, content, flags=re.DOTALL)
 
         # 问题模式2: 独立的 $$ (不是块级公式的一部分)
-        # 匹配单独出现的 $$ 且前后不是 $$ 的情况
-        # 这通常意味着公式未正确闭合
-        content = re.sub(r'(?<!\$)\$\$(?!\$)(?!\s*$)(?!\s*\n)', '$', content)
+        # 原始意图：修复知乎/微信文章中单独出现的未闭合 $$
+        # 但这个正则会把合法的 $$...$$ 块级公式开头误替换为 $
+        # 导致后续 inline regex 匹配混乱，生成垃圾 MathML，KFX 转换失败
+        # 修复：完全跳过此步。块级公式中的 $$ 由后续的 \$\$(.*?)\$\$ 正确处理
+        # content = re.sub(r'(?<!\$)\$\$(?!\$)(?!\s*$)(?!\s*\n)', '$', content)
 
         # 清理可能导致 KFX 问题的特殊 Unicode 字符
         # 替换全角空格为普通空格
@@ -411,6 +413,10 @@ class MarkdownToKFX:
     def process_math_formulas(self, content):
         """MathML 转换逻辑"""
         content = self.preprocess_md(content)
+
+        # 处理货币约定：USD($) 是内容生成时的转义写法
+        # 替换为 HTML 实体 &#36;，不触发 $...$ LaTeX 正则，最终渲染为 $
+        content = content.replace('USD($)', '&#36;')
 
         # 如果 skip_mathml 为 True，将数学公式转换为纯文本形式
         # KFX Enhanced Typesetting 不支持复杂 MathML
@@ -570,6 +576,20 @@ class MarkdownToKFX:
 
         content = re.sub(r'\$\$(.*?)\$\$', lambda m: replace_formula(m, True), content, flags=re.DOTALL)
 
+        # Protect block-level math HTML before inline conversion
+        # to prevent the inline $...$ regex from matching across block output
+        block_placeholders = {}
+        block_counter = [0]
+        def stash_block(match):
+            key = f"BLOCKMATHSTASH{block_counter[0]}ENDSTASH"
+            block_counter[0] += 1
+            block_placeholders[key] = match.group(0)
+            return key
+        def restore_block(match):
+            return block_placeholders.get(match.group(0), match.group(0))
+
+        content = re.sub(r'<div class="math-block">.*?</div>', stash_block, content, flags=re.DOTALL)
+
         def inline_cleanup(match):
             try:
                 mathml = latex2mathml.converter.convert(clean_latex_source(match.group(1)))
@@ -579,6 +599,9 @@ class MarkdownToKFX:
                 return match.group(0)
 
         content = re.sub(r'\$([^\$]+)\$', inline_cleanup, content)
+
+        # Restore block-level math
+        content = re.sub(r'BLOCKMATHSTASH\d+ENDSTASH', restore_block, content)
         return content
 
     def sanitize_anchor(self, title):
@@ -637,12 +660,16 @@ class MarkdownToKFX:
         if not toc_items:
             return ""
 
+        # 规范化层级：找到最小层级，将其映射为 2（H2 作为顶层）
+        min_level = min(item['level'] for item in toc_items)
+        
         html_parts = ['<div class="toc">', '<h2>目录</h2>', '<ul>']
         open_ul_count = 1  # 追踪打开的 ul 标签数量
-        prev_level = 2
+        prev_level = 2  # 规范化后的起始层级
 
         for item in toc_items:
-            level = item['level']
+            # 规范化层级：最小层级映射为 2
+            level = item['level'] - min_level + 2
 
             # 处理层级变化
             if level > prev_level:
@@ -657,7 +684,9 @@ class MarkdownToKFX:
                     html_parts.append('</ul></li>')
                     open_ul_count -= 1
 
-            html_parts.append(f'<li><a href="#{item["anchor"]}">{item["title"]}</a></li>')
+            # 转义标题中的特殊字符
+            safe_title = item['title'].replace('<', '&lt;').replace('>', '&gt;').replace('&', '&amp;')
+            html_parts.append(f'<li><a href="#{item["anchor"]}">{safe_title}</a></li>')
             prev_level = level
 
         # 关闭所有打开的 ul 标签
@@ -676,17 +705,22 @@ class MarkdownToKFX:
         # 创建锚点查找表：标题 -> 锚点
         # 注意：由于可能存在相同标题，需要按顺序匹配
         toc_idx = 0
-        pattern = r'^(#{2,6})\s+(.+)$'
+        h1_skipped = False
+        pattern = r'^(#{1,6})\s+(.+)$'
 
         def add_id(match):
-            nonlocal toc_idx
+            nonlocal toc_idx, h1_skipped
+            level = len(match.group(1))
+            # 跳过第一个 H1 标题（书名），与 extract_toc 的行为一致
+            if level == 1 and not h1_skipped:
+                h1_skipped = True
+                return match.group(0)
             if toc_idx < len(self.toc_items):
                 item = self.toc_items[toc_idx]
                 toc_idx += 1
-                level = match.group(1)
                 title = match.group(2).strip()
                 anchor = item['anchor']
-                return f'{level} {title} {{#{anchor}}}'
+                return f'{"#" * level} {title} {{#{anchor}}}'
             return match.group(0)
 
         return re.sub(pattern, add_id, md_content, flags=re.MULTILINE)
