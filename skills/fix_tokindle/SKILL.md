@@ -125,6 +125,43 @@ single-chapter files of the same size succeed.
 - Convert each chapter individually
 - Push EPUB format instead of KFX (`send_to_kindle(format="epub")`)
 
+### FP6b: Stray $$ / unpaired $ from malformed source (FIXED 2026-07-23)
+
+**Location**: Source Markdown file (not md2kfx.py)
+
+**Bug**: arXiv→Markdown conversion (tex2md.py) can produce stray `$$` markers
+and odd-count `$` signs. When `$$...$$` regex pairs are misaligned (odd number
+of `$$`, or a stray `$$` mid-line), one block-formula match captures headings
+and English prose between two distant `$$` markers. All this text gets sent
+to `latex2mathml.converter.convert()`, producing massive garbage MathML
+(43K+ `<mi>` tags spelling English words letter-by-letter), which crashes
+Kindle Previewer 3.
+
+**Detection**: Run `check_math_delimiters.py` BEFORE KFX conversion:
+```bash
+"D:/storage/program/miniconda/envs/anxu/python.exe" \
+  "D:/data/anan/projects/tokindle/scripts/check_math_delimiters.py" <md_file>
+```
+The script reports: ODD_DD_COUNT, ODD_D_COUNT, STRAY_DD, MISPAIRED_DD,
+EMPTY_DD_PAIR — with line numbers, context, and fix suggestions.
+
+**Fix**: Fix the SOURCE Markdown file, not md2kfx.py:
+1. Run the checker
+2. Read the JSON report + affected MD lines
+3. Fix stray `$$` → `$` (inline formula end typo)
+4. Remove orphan standalone `$$` lines (lost partners from split equations)
+5. Re-run checker until `issue_count == 0`
+6. Then convert to KFX
+
+**Why not fix in md2kfx.py**: Adding validation logic inside md2kfx only
+hides the symptom (filters garbage MathML) but loses formula rendering.
+The correct approach is to fix `$` pairing in the source MD so all formulas
+render correctly.
+
+**Full case study**: See `references/math-delimiter-debugging.md` for the
+Kimi Linear paper debugging session — 5 fix patterns, fix ordering, and
+verification methodology.
+
 ### FP6: MCP conversion thread dies on child process kill
 
 **Location**: tokindle MCP server daemon thread
@@ -266,16 +303,26 @@ delegate_task(
 )
 ```
 
-### Step 3: Apply fix to md2kfx.py
+### Step 3: Apply fix
 
-Once the root cause is identified, apply a targeted patch to
-`D:/data/anan/projects/tokindle/src/md2kfx.py` using the `patch` tool.
-Do NOT rewrite the entire file.
+**For `$`/`$$` delimiter issues (FP6b — MOST COMMON for arXiv papers):**
+Fix the SOURCE Markdown file, NOT md2kfx.py. Run `check_math_delimiters.py`,
+read the JSON report, fix stray `$$`/orphan `$` in the MD, re-run checker
+until `issue_count == 0`. See `references/math-delimiter-debugging.md` for
+the full case study with 5 fix patterns.
 
-### Step 4: Verify full pipeline
+**For md2kfx.py internal bugs (FP1–FP4):**
+Apply a targeted patch to `D:/data/anan/projects/tokindle/src/md2kfx.py`
+using the `patch` tool. Do NOT rewrite the entire file.
 
-Re-run the complete conversion (not just the failing subset) to confirm
-the fix works end-to-end:
+**CRITICAL**: Do NOT add validation/filtering logic inside md2kfx.py to
+"catch" garbage MathML. This hides the symptom but loses formula rendering.
+Always fix the root cause in the source MD or the conversion regex.
+
+### Step 4: Verify full pipeline (MANDATORY)
+
+After ANY fix, re-run the COMPLETE conversion end-to-end and confirm the
+result is `.kfx`, not `.epub`. A fix is not done until the KFX file exists:
 
 ```python
 import sys
@@ -284,9 +331,12 @@ from src.md2kfx import MarkdownToKFX
 
 converter = MarkdownToKFX(md_path, kfx_path, title="...", author="...")
 result = converter.convert()
-# Success: result ends with ".kfx"
-# Failure: result ends with ".epub" (KFX conversion fell back)
+# Success: result is a .kfx Path
+# Failure: result is a .epub Path (KFX conversion fell back)
 ```
+
+Or via MCP: `mcp_tokindle_get_file_info(file_id)` — check `has_kfx: true`
+and `status: "converted"` (not `"converted_epub"`).
 
 ## Common Fix Patterns
 
@@ -341,6 +391,24 @@ converter = MarkdownToKFX(md_path, kfx_path, title="...", author="...",
 
 This converts `$...$` to `[...]` and `$$...$$` to `[...]` (plain text in
 brackets). Formulas won't render as math but KFX conversion will succeed.
+
+### Pattern D: Fix $ delimiter pairing in source MD (PREFERRED for arXiv papers)
+
+When garbage MathML comes from stray `$$` or unpaired `$` in the source
+Markdown (not from md2kfx.py bugs), fix the SOURCE file:
+
+1. Run `check_math_delimiters.py` on the MD file
+2. Read the JSON report — fix types: STRAY_DD, MISPAIRED_DD, ODD_D_COUNT
+3. Apply targeted patches to the MD file (not md2kfx.py!)
+4. Re-run checker until `issue_count == 0`
+5. Re-convert to KFX and verify
+
+See `references/math-delimiter-debugging.md` for 5 real-world fix patterns
+from the Kimi Linear paper case study.
+
+This is the PREFERRED fix because it preserves formula rendering. Adding
+validation inside md2kfx.py (Pattern A/B) only hides the symptom — the
+formulas that should have been in those `$$` pairs are silently dropped.
 
 ## File Locations
 

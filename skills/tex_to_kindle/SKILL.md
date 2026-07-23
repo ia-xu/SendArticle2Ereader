@@ -86,6 +86,42 @@ This produces:
 - References: `\ref` → `(Figure/Table label)`
 - Special chars: `\%` → `%`, `\$` → `USD($)`
 
+### Step 2.5: Check & Fix Math Delimiters (MANDATORY)
+
+tex2md.py output often has stray `$$` or unpaired `$` from arXiv→MD conversion
+artifacts. These cause garbage MathML and KFX conversion failure.
+
+**Use the `md-math-check` skill for the full workflow.** Summary:
+
+```bash
+PYTHON="D:/storage/program/miniconda/envs/anxu/python.exe"
+CHECKER="D:/data/anan/projects/tokindle/scripts/check_math_delimiters.py"
+
+"$PYTHON" "$CHECKER" "<md_file>"
+```
+
+The JSON report shows issue types (STRAY_DD, ODD_D_COUNT, MISPAIRED_DD, etc.)
+with line numbers and context. Read the report + affected MD lines, apply
+targeted `patch` fixes, re-run until `issue_count == 0`.
+
+**Typical arXiv fix patterns** (see `references/math-delimiter-debugging.md`
+in the `fix_tokindle` skill for the full case study):
+- Stray `$$` mid-line → change to `$` (inline formula end typo)
+- Orphan `$$` on its own line → delete (lost partner from split equation)
+- `$` opener with `$$` closer → normalize to `$$...$$`
+- Standalone `$` in table fragments → delete
+
+### Step 3: Generate AI Paper Reading Guide
+4. **Lines 660-664** — `$` opener with `$$` closer mismatch: reformatted to `$$...$$`
+5. **Line 557** — standalone `$` in table fragment (`$ &`): deleted `$`
+
+After all 5 fixes: `issue_count == 0`, `$$` 14 (even), `$` 378 (even) → KFX SUCCESS.
+
+**Fix order matters**: fix `STRAY_DD` first (realigns `$$` pairs), then orphan
+`$$` lines, then `$`/`$$` mismatches, then standalone `$` fragments.
+
+See `fix_tokindle` skill → `references/math-delimiter-debugging.md` for full details.
+
 ### Step 3: Generate AI Paper Reading Guide
 
 Use a subagent to read the full Markdown and generate a structured 12-section
@@ -178,6 +214,14 @@ ls -la "D:/data/path/to/paper.kfx"
 cp "D:/data/path/to/paper.kfx" "/f/documents/Downloads/Items01/article/"
 ```
 
+**EPUB fallback:** Math-heavy papers (200+ inline formulas, or papers cleaned
+from TikZ source) sometimes fail KFX conversion (EPUB succeeds, KFX hangs or
+errors). If `get_file_info` shows `status="converted_epub"` but `has_kfx=false`
+after 5+ minutes, push EPUB instead:
+```
+mcp_tokindle_send_to_kindle(file_id, format="epub")
+```
+
 ## Key Design Decisions
 
 ### Math Formula Handling
@@ -249,7 +293,49 @@ placeholders before inline conversion, then restored after.
 `\multicolumn` and `\multirow` are simplified to their content. Complex table
 layouts may not convert cleanly to Markdown tables.
 
-### P7: Debugging tex2md.py and KFX conversion failures
+### P7: TikZ-heavy papers — raw pgfplots code dumped into MD (CRITICAL)
+
+When a paper uses `\includegraphics{...}` with external PDF/PNG files, tex2md.py
+handles them correctly. But many modern papers draw ALL figures with TikZ and
+pgfplots inline (e.g. `\input{figures/mainfig.tex}` where the .tex file contains
+`\begin{tikzpicture}\begin{axis}...\addplot...`). tex2md.py resolves the `\input`
+and dumps the **raw TikZ/pgfplots source code** directly into the Markdown output.
+
+Symptoms: the MD file is much larger than expected (>200KB), contains lines like
+`\addplot[color=... only marks]`, `\node[model]`, `\resizebox`, `coordinates {(1, 2.5) ...}`,
+`\definecolor`, etc. These are useless in Markdown and will corrupt KFX conversion.
+
+**Detection:** After tex2md.py runs, check the output for `\resizebox`, `\addplot`,
+`\begin{tikzpicture}`, `\begin{axis}`, `\node[`. If found, the paper is TikZ-heavy.
+
+**Solution — see `references/tikz-paper-workflow.md` for the full procedure:**
+1. Download the paper PDF from arXiv (`https://arxiv.org/pdf/<paper_id>`)
+2. Use pymupdf to extract each figure as PNG from the PDF (find "Figure N:" caption
+   positions, crop the region above each caption at 3x DPI)
+3. Clean the MD output: remove ALL TikZ/pgfplots code blocks
+4. Insert `![Figure N: ...](images/figN.png)` at the correct positions
+5. Clean `\textcolor{color}{content}` → `content` in math (brace-aware removal)
+6. If KFX fails but EPUB succeeds, push EPUB instead
+
+### P8: Stray $$ / unpaired $ from tex2md (FIXED via Step 2.5)
+
+tex2md.py sometimes produces stray `$$` markers (e.g. when `\]` or `$$` appears
+mid-paragraph in the source, or when equation environments are split across
+section breaks). A single stray `$$` shifts ALL subsequent `$$` pairing,
+causing the block formula regex to wrap headings and prose as fake MathML.
+This produces 40K+ garbage `<mi>` elements and crashes Kindle Previewer 3.
+
+**Detection**: Run `check_math_delimiters.py` (Step 2.5). If `ODD_DD_COUNT`,
+`STRAY_DD`, or `MISPAIRED_DD` issues are reported, the MD needs fixing before
+KFX conversion.
+
+**Fix**: Follow Step 2.5 workflow — read the check report, fix stray `$$` → `$`
+and remove orphan `$$` lines, re-run checker until clean.
+
+**DO NOT** add validation logic inside md2kfx.py to filter garbage — this only
+hides the symptom and loses formula rendering. Fix the source MD instead.
+
+### P9: Debugging tex2md.py and KFX conversion failures
 If the converter produces wrong output (exploding file size, corrupted formulas,
 duplicated content) or KFX conversion fails with "internal error", see
 `references/kfx_root_cause_debugging.md` for the full root-cause analysis of the
