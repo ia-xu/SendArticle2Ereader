@@ -1,19 +1,32 @@
-"""
-TeX Source → Markdown Converter
+r"""
+TeX Source → Markdown Converter (v3.0 — Simplified)
 
-Converts arXiv LaTeX source (multi-file .tex + figures) into a single clean
-Markdown file suitable for KFX conversion via md2kfx.py.
+Converts arXiv LaTeX source into Markdown, preserving formulas as-is for
+LLM agent post-processing.
 
-Handles:
-  - Multi-file projects via \input{} resolution
-  - Custom macro expansion (\newcommand, \def, \renewcommand)
-  - Math: equation/align/gather → $$...$$, inline $...$ preserved
-  - Figures: \includegraphics (PDF→PNG conversion via pymupdf/fitz)
+What this script handles:
+  - Multi-file projects via \input{} resolution (comments stripped first)
+  - TikZ/pgfplots detection → <!-- TIKZ_FIGURE:path --> placeholders
+  - Custom macro expansion (\newcommand, \def, 
+enewcommand)
+  - Math environments → $$...$$ blocks (LaTeX preserved as-is)
+  - \ensuremath{...} → $...$
+  - Inline math $...$ protected during command processing
+  - Figures: \includegraphics → PNG (PDF→PNG via pymupdf, EPS→PNG via PIL)
   - Tables: tabular → Markdown tables
   - Algorithm blocks: algorithm/algorithmic → code blocks
   - Lists: itemize/enumerate → Markdown lists
-  - Citations: \cite/\citep → [Author, Year] text
-  - Cross-references: \ref → plain text numbers or descriptive labels
+  - Citations: \cite → [key], references: 
+ef → labels
+  - Special chars: \% → %, \$ → USD($)
+
+What it does NOT do (left for LLM agent post-processing):
+  - Fix $$ / $ delimiter pairing (stray $$, unpaired $, mispaired blocks)
+  - Convert \operatorname→\mathrm, \bm→\boldsymbol for latex2mathml
+  - Clean up \textcolor, \colorbox, 
+aisebox, \faGithub remnants
+  - Handle \begin{aligned} wrapping for alignment formulas
+  - Fix text corruption artifacts
 
 Usage:
   python tex2md.py --tex-dir <source_dir> --output <output.md> [--title "..."] [--author "..."]
@@ -58,7 +71,7 @@ def convert_pdf_to_png(pdf_path: Path, output_dir: Path, dpi: int = 200) -> Opti
 # ─── TeX Project Parser ──────────────────────────────────────────────
 
 class TexProject:
-    """Parses a multi-file TeX project, resolves \input, expands macros."""
+    r"""Parses a multi-file TeX project, resolves \input, expands macros."""
 
     def __init__(self, tex_dir: Path):
         self.tex_dir = tex_dir
@@ -70,7 +83,7 @@ class TexProject:
         self.authors = ""
 
     def find_main_file(self) -> Path:
-        """Find the main .tex file (the one with \documentclass or \begin{document})."""
+        r"""Find the main .tex file (the one with \documentclass or \begin{document})."""
         tex_files = sorted(self.tex_dir.glob("*.tex"))
         for tf in tex_files:
             try:
@@ -92,7 +105,7 @@ class TexProject:
         raise FileNotFoundError(f"No .tex files found in {self.tex_dir}")
 
     def resolve_input(self, content: str) -> str:
-        """Resolve all \input{...} and \include{...} directives."""
+        r"""Resolve all \input{...} and \include{...} directives."""
         def replace_input(match):
             filename = match.group(1).strip()
             # Try with and without .tex extension
@@ -103,6 +116,9 @@ class TexProject:
                         sub_content = filepath.read_text(encoding='utf-8', errors='replace')
                     except:
                         return f"\n% [Could not read {candidate}]\n"
+                    if self._is_tikz_figure(sub_content):
+                        rel_path = str(filepath.relative_to(self.tex_dir))
+                        return f"\n<!-- TIKZ_FIGURE:{rel_path} -->\n"
                     # Recursively resolve nested \input
                     sub_content = self.resolve_input(sub_content)
                     return f"\n{sub_content}\n"
@@ -113,7 +129,7 @@ class TexProject:
         return content
 
     def extract_macros(self, content: str) -> str:
-        """Extract and remove \newcommand, \renewcommand, \def definitions."""
+        r"""Extract and remove \newcommand, \renewcommand, \def definitions."""
         # \newcommand{\name}[nargs]{body}  or  \newcommand*{\name}[nargs]{body}
         def extract_newcommand(match, body):
             name = match.group(1)
@@ -211,6 +227,15 @@ class TexProject:
         return content
 
     @staticmethod
+    def _is_tikz_figure(content: str) -> bool:
+        """Check if content is a TikZ/pgfplots figure (not a regular .tex file)."""
+        return bool(
+            re.search(r'\\begin\{tikzpicture\}', content) or
+            re.search(r'\\begin\{axis\}', content) or
+            re.search(r'\\pgfdeclareplotmark', content)
+        )
+
+    @staticmethod
     def _expand_parameterized_macro(content: str, name: str, nargs: int, body: str) -> str:
         """Expand a macro with arguments: \\name{a}{b} → body with #1=a, #2=b.
         Uses word-boundary matching so \\mat does NOT match \\mathbb."""
@@ -282,6 +307,8 @@ class LatexToMarkdown:
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.figure_counter = 0
         self.table_counter = 0
+        self.table_raw_counter = 0
+        self.code_raw_counter = 0
         self.equation_counter = 0
         self.citations: Dict[str, str] = {}  # key → formatted citation text
 
@@ -385,7 +412,7 @@ class LatexToMarkdown:
         return content
 
     def _strip_comments(self, content: str) -> str:
-        """Remove LaTeX comments (% to end of line), preserving escaped \%."""
+        r"""Remove LaTeX comments (% to end of line), preserving escaped \%."""
         lines = content.split('\n')
         result = []
         for line in lines:
@@ -431,7 +458,7 @@ class LatexToMarkdown:
         return content
 
     def _remove_preamble(self, content: str) -> str:
-        """Remove everything from \documentclass to \begin{document}."""
+        r"""Remove everything from \documentclass to \begin{document}."""
         # Find \begin{document}
         doc_start = content.find('\\begin{document}')
         if doc_start != -1:
@@ -446,7 +473,7 @@ class LatexToMarkdown:
         return content
 
     def _process_environments(self, content: str) -> str:
-        """Process LaTeX environments (\begin{env}...\end{env})."""
+        r"""Process LaTeX environments (\begin{env}...\end{env})."""
         # Process from innermost to outermost
         max_iterations = 50
         for _ in range(max_iterations):
@@ -484,6 +511,8 @@ class LatexToMarkdown:
                 replacement = self._convert_abstract(inner)
             elif env_base == 'center':
                 replacement = inner.strip() + '\n'
+            elif env_base in ('table', 'table*'):
+                replacement = self._convert_table_env(inner)
             elif env_base in ('theorem', 'lemma', 'proposition', 'definition',
                               'corollary', 'remark', 'example', 'proof'):
                 replacement = self._convert_theorem(inner, env_base)
@@ -504,10 +533,12 @@ class LatexToMarkdown:
         # Remove \label{...} and \tag{...}
         math = re.sub(r'\\label\s*\{[^}]*\}', '', math)
         math = re.sub(r'\\tag\s*\{[^}]*\}', '', math)
-        # For cases/split environments: keep the \begin{cases} wrapper
-        # so latex2mathml can process them correctly
+        # For cases/split/aligned/gathered: these are AMS sub-environments
+        # that are always nested inside a parent math env (equation/align).
+        # The parent already provides $$ wrapping, so we just unpack the
+        # inner content. The \\ line breaks preserve alignment structure.
         if env_name in ('cases', 'split', 'aligned', 'gathered'):
-            return f'\n\n$$\\begin{{{env_name}}}{math}\\end{{{env_name}}}$$\n\n'
+            return math
         return f'\n\n$${math}$$\n\n'
 
     def _convert_list(self, inner: str, env_name: str) -> str:
@@ -550,7 +581,20 @@ class LatexToMarkdown:
             inner
         )
         if not img_match:
-            return ''  # No image found
+            # Check if this figure contains code listings (minted/lstlisting/verbatim)
+            # instead of images. These need image-based rendering.
+            if re.search(r'\\begin\{(minted|lstlisting|verbatim)\}', inner):
+                self.code_raw_counter += 1
+                n = self.code_raw_counter
+                caption = self._extract_table_caption(inner)  # reuse caption extractor
+                raw = inner.strip()
+                raw = raw.replace('\\', '\\LATEXBS')
+                return (
+                    f'\n<!-- CODE_RAW:{n}|{caption} -->\n'
+                    f'{raw}\n'
+                    f'<!-- /CODE_RAW:{n} -->\n'
+                )
+            return ''  # No image or code found
 
         img_path = img_match.group(2)
         img_options = img_match.group(1) or ""
@@ -708,8 +752,50 @@ class LatexToMarkdown:
         cells.append(''.join(current))
         return cells
 
+    def _convert_table_env(self, inner: str) -> str:
+        """Handle table environment. Complex tables → raw LaTeX blocks
+        for image rendering; simple tables → pass through for tabular.
+        """
+        # Find tabular spec inside inner content (balanced-brace matching)
+        tab_start = re.search(r'\\begin\{tabular\}\{', inner)
+        if tab_start:
+            spec_start = tab_start.end() - 1  # position of {
+            _, spec_end = TexProject._extract_balanced_braces(inner, spec_start)
+            spec = inner[tab_start.end():spec_end - 1]
+            # Complex column specs: @{}, >{}, !{}
+            if any(c in spec for c in '@>!'):
+                self.table_raw_counter += 1
+                n = self.table_raw_counter
+                caption = self._extract_table_caption(inner)
+                # Escape all backslash-commands so subsequent tex2md steps
+                # (process_inline_commands, cleanup) don't mangle them.
+                # The table_renderer script restores them before compiling.
+                raw = inner.strip()
+                raw = raw.replace('\\', '\\LATEXBS')
+                return (
+                    f'\n<!-- TABLE_RAW:{n}|{caption} -->\n'
+                    f'{raw}\n'
+                    f'<!-- /TABLE_RAW:{n} -->\n'
+                )
+
+        # Simple table — let inner content (tabular) be processed normally
+        return inner
+
+    def _extract_table_caption(self, inner: str) -> str:
+        """Extract caption text from table inner content."""
+        cap_match = re.search(r'\\caption\s*\{', inner)
+        if cap_match:
+            caption_start = cap_match.end() - 1  # position of {
+            _, end = TexProject._extract_balanced_braces(inner, caption_start)
+            caption = inner[cap_match.end():end - 1]
+            # Strip \\label{...} from caption
+            caption = re.sub(r'\s*\\label\s*\{[^}]*\}', '', caption)
+            caption = self._clean_text_content(caption)
+            return caption.strip()
+        return ''
+
+
     def _convert_algorithm_env(self, inner: str, env_name: str) -> str:
-        """Convert algorithm/algorithmic environment to code block."""
         algo_text = inner.strip()
 
         # Convert algorithmic commands to readable pseudocode
@@ -782,6 +868,7 @@ class LatexToMarkdown:
         content = re.sub(r'\\subsection\s*\*?\s*\{([^}]*)\}', lambda m: f'\n\n### {self._clean_text_content(m.group(1))}\n\n', content)
         content = re.sub(r'\\subsubsection\s*\*?\s*\{([^}]*)\}', lambda m: f'\n\n#### {self._clean_text_content(m.group(1))}\n\n', content)
         content = re.sub(r'\\paragraph\s*\*?\s*\{([^}]*)\}', lambda m: f'\n\n##### {self._clean_text_content(m.group(1))}\n\n', content)
+        content = re.sub(r'\\subparagraph\s*\*?\s*\{([^}]*)\}', lambda m: f'\n\n##### {self._clean_text_content(m.group(1))}\n\n', content)
 
         # Text formatting
         content = self._replace_braced_command('textbf', content, lambda s: f'**{s}**')
@@ -826,6 +913,9 @@ class LatexToMarkdown:
         content = re.sub(r'\\linebreak', '\n', content)
         content = re.sub(r'\\par\b', '\n\n', content)
 
+        # \url{...} → just the URL
+        content = re.sub(r'\\url\s*\{([^}]*)\}', r'\1', content)
+
         # \usepackage, \documentclass etc (should be gone, but just in case)
         content = re.sub(r'\\usepackage(\[[^\]]*\])?\s*\{[^}]*\}', '', content)
         content = re.sub(r'\\documentclass(\[[^\]]*\])?\s*\{[^}]*\}', '', content)
@@ -834,9 +924,17 @@ class LatexToMarkdown:
         content = re.sub(r'\\begin\{[^}]*\}(\[[^\]]*\])?', '', content)
         content = re.sub(r'\\end\{[^}]*\}', '', content)
 
-        # Remove \toprule, \midrule, \bottomrule, \hline (stragglers)
-        content = re.sub(r'\\(toprule|midrule|bottomrule|hline)\b', '', content)
+        # Remove \toprule, \midrule, \bottomrule, \hline, \cmidrule (stragglers)
+        content = re.sub(r'\\(toprule|midrule|bottomrule|hline|cmidrule(\[[^\]]*\])?)\b', '', content)
         content = re.sub(r'\\rowcolor\s*\{[^}]*\}', '', content)
+
+        # Remove stray setup commands (2 or 3 args)
+        content = re.sub(r'\\newenvironment\s*\{[^}]*\}\s*\{[^}]*\}(\s*\{[^}]*\})?', '', content)
+        content = re.sub(r'\\captionsetup\s*\{[^}]*\}', '', content)
+        # Remove \setminted{...} blocks (multi-line minted configs)
+        content = re.sub(r'\\setminted\s*\{[^}]*\}', '', content)
+        # Fix \string@ → @ (LaTeX internal command artifact)
+        content = content.replace('\\string@', '@')
 
         return content
 
@@ -885,12 +983,32 @@ class LatexToMarkdown:
         content = re.sub(r'\s*\\\]', '$$', content)
         # \displaystyle → just remove (keep content)
         content = content.replace('\\displaystyle', ' ')
+
+        # Convert latex2mathml-unsupported commands (deterministic)
+        content = content.replace('\\operatorname', '\\mathrm')
+        content = content.replace('\\bm{', '\\boldsymbol{')
+        # Also handle \bm x (single-char, no braces) → \boldsymbol{x}
+        content = re.sub(r'\\bm\s+([a-zA-Z])', r'\\boldsymbol{\1}', content)
+        # Remove \tag{...} from formulas
+        content = re.sub(r'\\tag\s*\{[^}]*\}', '', content)
         # Common math commands that need cleanup
-        content = re.sub(r'\\quad', lambda m: ' \\quad ', content)
+        content = re.sub(r'\\\\quad', lambda m: ' \\\\quad ', content)
+        # Fix: _process_special_chars converts \$ to USD($), but sometimes
+        # the closing $$ of a display math block gets treated as escaped $.
+        # This wrecks $$ pairing. Restore the intended $$.
+        content = content.replace('\\USD($)$', '$$')
+        # Strip custom color macros that survive macro expansion
+        # (e.g. \brickred{...}, \midnightblue{...}, \white{...})
+        for cmd in ['brickred', 'midnightblue', 'white', 'kimiblue']:
+            content = re.sub(
+                r'\\' + cmd + r'\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}',
+                r'\1', content
+            )
+
         return content
 
     def _process_figures_inline(self, content: str) -> str:
-        """Process standalone \includegraphics outside figure environments."""
+        r"""Process standalone \includegraphics outside figure environments."""
         def replace_includegraphics(match):
             img_path = match.group(2)
             md_img = self._resolve_image(img_path)
@@ -908,8 +1026,8 @@ class LatexToMarkdown:
 
     def _process_references(self, content: str) -> str:
         """Convert citations and references."""
-        # \citep{key1, key2} → [key1, key2]
-        content = re.sub(r'\\citep?\s*\{([^}]*)\}', lambda m: f'[{m.group(1)}]', content)
+        # \citep and \parencite → [key1, key2]
+        content = re.sub(r'\\(?:citep?|parencite)\s*\{([^}]*)\}', lambda m: f'[{m.group(1)}]', content)
         content = re.sub(r'\\citeauthor\s*\{([^}]*)\}', lambda m: f'[{m.group(1)}]', content)
         content = re.sub(r'\\citeyear\s*\{([^}]*)\}', lambda m: f'[{m.group(1)}]', content)
         # \ref{label} → (Figure/Table N)
@@ -975,6 +1093,24 @@ class LatexToMarkdown:
         """Final cleanup of the Markdown output."""
         # Remove empty $$...$$ blocks (from commented-out equations)
         content = re.sub(r'\$\$\s*\$\$', '', content)
+
+        # Strip \textcolor{color}{content} -> content (balanced braces)
+        content = self._strip_twoarg_command(content, r'\textcolor')
+        # Strip \colorbox{color}{content} -> content
+        content = self._strip_twoarg_command(content, r'\colorbox')
+        # Strip \raisebox{dimen}{content} -> content
+        content = self._strip_twoarg_command(content, r'\raisebox')
+
+        # Remove fontawesome icons
+        content = re.sub(r'\\fa[A-Z][a-zA-Z]*\b', '', content)
+
+        # Clean up orphan raisebox dimen remnants {0pt{...}} -> ...
+        # These appear after raisebox{0pt}{X} is stripped to {0pt{X}}
+        content = self._clean_orphan_dimen_braces(content)
+
+        # Clean up [scale=...]{path} remnants from \includegraphics in \raisebox
+        content = re.sub(r'\[[^\]]*scale=[^\]]*\]\s*\{[^}]*\}', '', content)
+
         # Remove excessive blank lines
         content = re.sub(r'\n{4,}', '\n\n\n', content)
         # Remove trailing whitespace on lines
@@ -984,48 +1120,179 @@ class LatexToMarkdown:
         # Remove \newpage, \clearpage, \pagebreak
         content = re.sub(r'\\(newpage|clearpage|pagebreak)\b', '', content)
 
-        # Clean up leftover LaTeX text commands OUTSIDE math and code blocks.
-        # Process line by line: skip lines containing ANY $ (inline or block math)
-        result_lines = []
-        in_code_block = False
-        in_block_math = False
-        for line in content.split('\n'):
-            stripped = line.strip()
-            if stripped.startswith('```'):
-                in_code_block = not in_code_block
-                result_lines.append(line)
-                continue
-            if in_code_block:
-                result_lines.append(line)
-                continue
-            # Track multi-line $$...$$ blocks
-            if stripped.startswith('$$'):
-                if stripped.endswith('$$') and len(stripped) > 2:
-                    # Single-line $$...$$ — skip cleanup
-                    result_lines.append(line)
-                    continue
-                else:
-                    # Opening $$ of a multi-line block
-                    in_block_math = not in_block_math
-                    result_lines.append(line)
-                    continue
-            if in_block_math:
-                result_lines.append(line)
-                continue
-            # Skip lines with inline math (any $ at all)
-            if '$' in line:
-                result_lines.append(line)
-                continue
-            # For other lines: remove stray \command patterns (not math)
-            # But be careful: don't remove LaTeX that's inside backtick code spans
-            parts = line.split('`')
-            for i, part in enumerate(parts):
-                if i % 2 == 0:  # Outside backticks
-                    parts[i] = re.sub(r'\\[a-zA-Z]+\b', '', part)
-            result_lines.append('`'.join(parts))
+        # Detect and wrap leaked LaTeX math blocks (lines of pure math
+        # that lost their $$ wrappers during conversion).
+        content = self._wrap_leaked_math_blocks(content)
 
-        content = '\n'.join(result_lines)
+        # Strip orphan includegraphics option blocks like {width=1\columnwidth}
+        content = re.sub(r'\{width=[^}]*\}', '', content)
+
         return content.strip()
+    @staticmethod
+    def _strip_twoarg_command(content: str, cmd: str) -> str:
+        """Remove \\cmd{arg1}{arg2} from content, keeping arg2 only.
+        Uses balanced brace matching for nested braces in arg2."""
+        result = []
+        pos = 0
+        while True:
+            m = re.search(re.escape(cmd) + r'\s*\{[^}]*\}\s*\{', content[pos:])
+            if not m:
+                break
+            abs_start = pos + m.start()
+            # Position of the second '{' (start of arg2)
+            brace2_start = pos + m.end() - 1
+            # Find matching '}' for arg2
+            depth = 0
+            end = brace2_start
+            for i in range(brace2_start, len(content)):
+                if content[i] == '{':
+                    depth += 1
+                elif content[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            inner = content[brace2_start + 1:end - 1]
+            result.append(content[pos:abs_start])
+            result.append(inner)
+            pos = end
+        result.append(content[pos:])
+        return ''.join(result)
+
+    @staticmethod
+    def _clean_orphan_dimen_braces(content: str) -> str:
+        """Clean {dimen{inner}} → inner after raisebox stripping.
+        Also handles {dimen{}} (empty inner) and {dimen{text}} patterns."""
+        # First pass: {Npt{inner}} or {-Npt{inner}} or {N.Npt{inner}} or {Npt{}} 
+        pattern = r'\{[0-9.-]+pt\{'
+        result = []
+        pos = 0
+        for m in re.finditer(pattern, content):
+            abs_start = m.start()
+            brace1_pos = abs_start  # position of first '{'
+            # Find matching '}' for first brace (the dimen arg)
+            depth = 0
+            end1 = brace1_pos
+            for i in range(brace1_pos, len(content)):
+                if content[i] == '{': depth += 1
+                elif content[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end1 = i + 1
+                        break
+            # The content between dimen's content and its closing is the inner
+            # Structure: {dimen{inner}} → find matching }} 
+            # end1 is after first '}'. Check if next char is '}'
+            if end1 < len(content) and content[end1] == '}':
+                # Extract inner: from after dimen{ to before }}
+                # dimen starts at brace1_pos+len(dimen_part)
+                dimen_part = m.group()
+                inner_start = brace1_pos + len(dimen_part)
+                inner = content[inner_start:end1 - 1] if end1 > inner_start else ''
+                result.append(content[pos:abs_start])
+                if inner:
+                    result.append(inner)
+                pos = end1 + 1  # skip past }}
+                continue
+            result.append(content[pos:end1])
+            pos = end1
+        result.append(content[pos:])
+        return ''.join(result)
+
+    @staticmethod
+    def _wrap_leaked_math_blocks(content: str) -> str:
+        """Wrap contiguous lines of leaked LaTeX math in $$...$$ blocks."""
+        lines = content.split('\n')
+        result = []
+        in_code = False
+        in_block_math = False
+
+        math_cmds = ['\\mathbf', '\\boldsymbol', '\\mathrm', '\\mathcal',
+                     '\\mathbb', '\\sum', '\\prod', '\\int', '\\frac',
+                     '\\left', '\\right', '\\underbrace', '\\text',
+                     '\\quad', '\\qquad', '\\alpha', '\\beta', '\\gamma',
+                     '\\Gamma', '\\odot', '\\top', '\\in', '\\times',
+                     '\\rightarrow', '\\mathrm']
+
+        pending_math = []
+
+        def _has_math_content(text):
+            """Check if text contains actual LaTeX math (not prose with $)."""
+            indicators = [
+                r'\\mathbf', r'\\boldsymbol', r'\\mathrm', r'\\mathbb',
+                r'\\sum', r'\\prod', r'\\int', r'\\frac', r'\\left', r'\
+ight',
+                r'\\underbrace', r'\\alpha', r'\\beta', r'\\gamma', r'\\theta',
+                r'\\Gamma', r'\\Delta', r'\\odot', r'\\top', r'\\times', r'\\cdot',
+                r'\
+ightarrow', r'\\in', r'\\langle', r'\
+angle',
+                r'_\{\w', r'\^\{\w', r'_{\w', r'\^\w',
+                r'\\hat', r'\\bar', r'\\tilde', r'\\begin\{', r'\\end\{',
+                r'=\s*\\', r'&=\s*',
+            ]
+            return any(re.search(p, text) for p in indicators)
+
+        def flush_math():
+            if pending_math:
+                combined = '\\n'.join(pending_math)
+                if _has_math_content(combined):
+                    result.append('$$')
+                    result.extend(pending_math)
+                    result.append('$$')
+                else:
+                    result.extend(pending_math)
+                pending_math.clear()
+
+        for line in lines:
+            s = line.strip()
+
+            if s.startswith('```'):
+                flush_math()
+                in_code = not in_code
+                result.append(line)
+                continue
+            if in_code:
+                flush_math()
+                result.append(line)
+                continue
+
+            starts_dd = s.startswith('$$')
+            ends_dd = s.endswith('$$')
+            if starts_dd:
+                flush_math()
+                in_block_math = not (starts_dd and ends_dd and len(s) > 2)
+                result.append(line)
+                continue
+            if ends_dd and not starts_dd:
+                in_block_math = False
+                result.append(line)
+                continue
+            if in_block_math or '$' in s or not s:
+                flush_math()
+                result.append(line)
+                continue
+            if s.startswith('#') or s.startswith('!['):
+                flush_math()
+                result.append(line)
+                continue
+
+            # Detect pure math lines: have math commands and almost no English words
+            has_math = any(c in s for c in math_cmds)
+            if has_math:
+                stripped = re.sub(r'\\[a-zA-Z]+(\{[^}]*\})*', '', s)
+                stripped = re.sub(r'\{[^}]*\}', '', stripped)
+                stripped = re.sub(r'[^a-zA-Z\s]', '', stripped).strip()
+                words = [w for w in stripped.split() if len(w) > 2]
+                if len(words) <= 3:
+                    pending_math.append(line)
+                    continue
+
+            flush_math()
+            result.append(line)
+
+        flush_math()
+        return '\n'.join(result)
 
 
 # ─── Main Entry Point ────────────────────────────────────────────────

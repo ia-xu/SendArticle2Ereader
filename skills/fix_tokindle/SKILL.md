@@ -5,7 +5,7 @@ description: >
   garbage MathML, broken formulas). Documents the md2kfx pipeline, known
   failure points, diagnostic methods, and requires subagent-based binary
   search to minimize token usage.
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 platforms: [windows]
 metadata:
@@ -162,7 +162,36 @@ render correctly.
 Kimi Linear paper debugging session — 5 fix patterns, fix ordering, and
 verification methodology.
 
-### FP6: MCP conversion thread dies on child process kill
+### FP7: MCP server copies local images to wrong directory (FIXED 2026-07-27)
+
+**Location**: `mcp_server.py`, `_upload_local_file_sync()`, ~line 284
+
+**Bug**: When uploading a local MD file that has a sibling `images/` directory,
+the MCP server copied images to `UPLOAD_FOLDER/{file_id}_images/` (with `_images`
+suffix), but `MarkdownToKFX` looks for images at `UPLOAD_FOLDER/images/`.
+Path mismatch → all images silently lost → KFX has placeholders.
+
+**Symptom**: 
+- Kindle shows broken-image placeholders instead of actual images
+- KFX file is suspiciously small (~700KB for a paper that should be ~2.5MB with images)
+- EPUB is also tiny (~40KB vs expected ~1.5MB)
+
+**Why Zhihu/WeChat downloads were NOT affected**:
+Zhihu/WeChat downloaders save images directly to `UPLOAD_FOLDER/` root (no
+subdirectory) and MD references them without `images/` prefix. `MarkdownToKFX`
+falls through to the `else` branch (line 792) which joins `self.md_file.parent`
++ the bare filename → finds the image correctly.
+
+**Fix applied**: Changed `dest_images_dir = UPLOAD_FOLDER / f"{file_id}_images"`
+to `dest_images_dir = UPLOAD_FOLDER / 'images'` with per-file copy (not `copytree`
+which would overwrite other conversions' images).
+
+**How to detect**: The fastest signal is **file size**. Compare:
+- Healthy KFX with images: 2–3 MB
+- Broken KFX without images: 500–800 KB (5–10x smaller)
+- Healthy EPUB: 1–2 MB; broken: 30–50 KB
+
+No need to unpack — just `ls -la` the output files.
 
 **Location**: tokindle MCP server daemon thread
 
@@ -234,7 +263,51 @@ print(f"process_math_formulas: {time.time()-t0:.1f}s, {len(pre)} → {len(result
 print(f"Remaining $: {result.count('$')}")
 ```
 
-### D3: Run ebook-convert with verbose logs
+### D4: Quick image presence check (file size comparison)
+
+When images appear as placeholders on Kindle, the fastest diagnosis is **file size**.
+No need to unpack KFX or inspect EPUB:
+
+```bash
+# Compare with known healthy/unhealthy baselines:
+ls -la outputs/<file_id>.kfx outputs/<file_id>.epub
+```
+
+Healthy: KFX 2–3MB, EPUB 1–2MB. Broken (no images): KFX <1MB, EPUB <100KB.
+
+For deeper verification (confirm images are embedded and references match):
+
+```bash
+# Unpack KFX to check resource count and validity
+calibre-debug -r "KFX Input" -- outputs/<file_id>.kfx --unpack outputs/kfx_check
+
+# Inspect unpacked ZIP
+python -c "
+import zipfile
+with zipfile.ZipFile('outputs/kfx_check.zip') as z:
+    imgs = [f for f in z.namelist() if f.startswith('resource/')]
+    print(f'Images in KFX: {len(imgs)}')
+    # Verify each is valid JPEG
+    for f in imgs:
+        data = z.read(f)
+        valid = data[:2] == b'\xff\xd8'
+        print(f'  {f}: {len(data):,}B JPEG={valid}')
+"
+```
+
+### D5: Trace image lookup path in MarkdownToKFX
+
+The key code path is `markdown_to_html()` line 774-791. When an MD references
+`images/xxx.jpg`, `MarkdownToKFX` looks for:
+
+```python
+self.md_file.parent / 'images' / img_name
+```
+
+Where `self.md_file` is whatever path was passed to the constructor. If the MD
+was copied to a different directory than its images, this path will be wrong.
+
+To debug: print `self.md_file` and check if `self.md_file.parent / 'images'` exists.
 
 ```python
 import subprocess
@@ -410,7 +483,69 @@ This is the PREFERRED fix because it preserves formula rendering. Adding
 validation inside md2kfx.py (Pattern A/B) only hides the symptom — the
 formulas that should have been in those `$$` pairs are silently dropped.
 
-## File Locations
+## Image Debugging Strategy ("Kindle shows placeholders")
+
+When images appear as broken placeholders on Kindle but the conversion succeeded
+(no MathML errors, `has_kfx: true`), the issue is in the image COPY layer, not
+the MathML rendering layer. Follow this sequence:
+
+### Step 1: Check file sizes (5 seconds)
+
+```bash
+ls -la outputs/<file_id>.kfx outputs/<file_id>.epub
+```
+
+- KFX < 1MB → images missing (go to Step 2)
+- KFX > 2MB → images present (issue is on Kindle device side)
+
+### Step 2: Verify images exist at the lookup path
+
+`MarkdownToKFX` looks for images at `self.md_file.parent / 'images' / img_name`.
+Where `self.md_file` is the path passed to the constructor. Check:
+
+```bash
+# Is the MD file where we think it is?
+ls -la uploads/<file_id>.md
+
+# Does its parent directory have an images/ subfolder?
+ls uploads/images/*.jpg | wc -l
+```
+
+If `uploads/images/` is empty or missing, the images were never copied there.
+
+### Step 3: Trace the copy step
+
+For MCP uploads, `_upload_local_file_sync` copies images. Check:
+- Original images: `source_path.parent / 'images'` (the paper's output dir)
+- Destination: `UPLOAD_FOLDER / 'images'` (after fix) or `UPLOAD_FOLDER / '{file_id}_images'` (old buggy code)
+
+For direct md2kfx.py calls: images must be at `md_file.parent / 'images' /`.
+
+### Step 4: Verify KFX resources (if sizes look OK but still broken)
+
+```bash
+calibre-debug -r "KFX Input" -- outputs/<file_id>.kfx --unpack outputs/kfx_check
+python -c "
+import zipfile
+with zipfile.ZipFile('outputs/kfx_check.zip') as z:
+    # Count resources
+    imgs = [f for f in z.namelist() if f.startswith('resource/')]
+    print(f'Resources: {len(imgs)}')
+    # Check each is valid JPEG
+    for f in imgs:
+        data = z.read(f)
+        print(f'  {f}: {len(data):,}B JPEG={data[:2]==b\"\\xff\\xd8\"}')
+"
+```
+
+### Common pitfall: debug the pipeline from the WRONG end
+
+When the user says "images don't display", the instinct is to check the MD
+content, HTML structure, or CSS. All of these are distractions if the root
+cause is simpler: **the images were never copied into the conversion workspace**.
+
+Always check file sizes FIRST — it's the cheapest signal and it immediately
+narrows the problem to either "images missing" or "images present but not rendering."
 
 - md2kfx.py: `D:/data/anan/projects/tokindle/src/md2kfx.py`
 - MCP server: `D:/data/anan/projects/tokindle/mcp_server.py`

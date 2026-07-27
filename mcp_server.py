@@ -278,13 +278,15 @@ def _upload_local_file_sync(file_path: str, custom_title: str = None, custom_aut
         md_path = UPLOAD_FOLDER / f"{file_id}.md"
         shutil.copy2(str(src_path), str(md_path))
 
-        # 复制关联的 images 目录（如果存在）
+        # 复制关联的 images 目录到 uploads/images/（MarkdownToKFX 在此查找图片）
         src_images_dir = src_path.parent / 'images'
         if src_images_dir.exists() and src_images_dir.is_dir():
-            dest_images_dir = UPLOAD_FOLDER / f"{file_id}_images"
-            if dest_images_dir.exists():
-                shutil.rmtree(dest_images_dir)
-            shutil.copytree(src_images_dir, dest_images_dir)
+            dest_images_dir = UPLOAD_FOLDER / 'images'
+            dest_images_dir.mkdir(exist_ok=True)
+            for img_file in src_images_dir.iterdir():
+                if img_file.is_file():
+                    target = dest_images_dir / img_file.name
+                    shutil.copy2(img_file, target)
 
         # 更新数据库
         file_info = {
