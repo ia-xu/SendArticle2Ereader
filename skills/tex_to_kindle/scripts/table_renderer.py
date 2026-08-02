@@ -37,6 +37,7 @@ TABLE_PREAMBLE = r"""
 \usepackage{makecell}
 \usepackage[font=small]{caption}
 \usepackage[dvipsnames]{xcolor}
+\usepackage[normalem]{ulem}
 
 % Custom colors (from Kimi Linear and common palettes)
 \definecolor{brickred}{HTML}{b92622}
@@ -52,6 +53,10 @@ TABLE_PREAMBLE = r"""
 \newcommand{\white}[1]{\textcolor{white}{#1}}
 \newcommand{\brickred}[1]{\textcolor{brickred}{#1}}
 \newcommand{\midnightblue}[1]{\textcolor{midnightblue}{#1}}
+
+% Common custom column types (papers define these before \begin{table})
+\newcolumntype{P}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 
 \begin{document}
 """

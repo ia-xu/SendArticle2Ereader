@@ -109,13 +109,15 @@ class TexProject:
         def replace_input(match):
             filename = match.group(1).strip()
             # Try with and without .tex extension
+            # NOTE: use is_file() not exists() — a directory named like the
+            # file (e.g. `appendix/` vs `appendix.tex`) must not shadow it (P37).
             for candidate in [filename, filename + '.tex']:
                 filepath = self.tex_dir / candidate
-                if filepath.exists():
+                if filepath.is_file():
                     try:
                         sub_content = filepath.read_text(encoding='utf-8', errors='replace')
                     except:
-                        return f"\n% [Could not read {candidate}]\n"
+                        continue  # try the next candidate
                     if self._is_tikz_figure(sub_content):
                         rel_path = str(filepath.relative_to(self.tex_dir))
                         return f"\n<!-- TIKZ_FIGURE:{rel_path} -->\n"
@@ -228,12 +230,27 @@ class TexProject:
 
     @staticmethod
     def _is_tikz_figure(content: str) -> bool:
-        """Check if content is a TikZ/pgfplots figure (not a regular .tex file)."""
-        return bool(
+        """Check if content is a standalone TikZ/pgfplots figure file.
+
+        A standalone figure file contains tikzpicture/axis content but is NOT a
+        document/section file. Section files that merely contain one inline
+        tikzpicture (e.g. 5-infrastructure.tex with a figure env) must NOT be
+        treated as figure files, or the whole section would be replaced by a
+        placeholder (P36).
+        """
+        has_tikz = bool(
             re.search(r'\\begin\{tikzpicture\}', content) or
             re.search(r'\\begin\{axis\}', content) or
             re.search(r'\\pgfdeclareplotmark', content)
         )
+        if not has_tikz:
+            return False
+        # Reject document/section files (structural commands present)
+        if re.search(r'\\(section|subsection|subsubsection|chapter|part)\b', content):
+            return False
+        if re.search(r'\\(begin\{document\}|documentclass|include\{)', content):
+            return False
+        return True
 
     @staticmethod
     def _expand_parameterized_macro(content: str, name: str, nargs: int, body: str) -> str:
@@ -306,9 +323,11 @@ class LatexToMarkdown:
         self.images_dir = images_dir
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.figure_counter = 0
+        self.figure_labels: Dict[str, int] = {}  # label to figure number for refs
         self.table_counter = 0
         self.table_raw_counter = 0
         self.code_raw_counter = 0
+        self.tikz_raw_counter = 0
         self.equation_counter = 0
         self.citations: Dict[str, str] = {}  # key → formatted citation text
 
@@ -412,7 +431,15 @@ class LatexToMarkdown:
         return content
 
     def _strip_comments(self, content: str) -> str:
-        r"""Remove LaTeX comments (% to end of line), preserving escaped \%."""
+        r"""Remove LaTeX comments (% to end of line), preserving escaped \%.
+
+        Also strips \\iffalse...\\fi blocks (conditional compilation that
+        comments out content — like HTML comments, the content is excluded).
+        """
+        # Strip \iffalse...\fi blocks entirely (content is excluded by the author)
+        # Use non-greedy match with DOTALL to handle multi-line blocks.
+        content = re.sub(r'\\iffalse\b.*?\\fi\b', '', content, flags=re.DOTALL)
+
         lines = content.split('\n')
         result = []
         for line in lines:
@@ -581,6 +608,43 @@ class LatexToMarkdown:
             inner
         )
         if not img_match:
+            # Figure contains TikZ placeholder(s) (from \input{figures/*.tex}
+            # resolution). Preserve them so tikz_placeholder.py (Step 3) can
+            # render them — otherwise the whole figure (image + caption + label)
+            # is silently dropped (P35).
+            tikz_matches = re.findall(r'<!--\s*TIKZ_FIGURE:([^\s>]+)\s*-->', inner)
+            if tikz_matches:
+                caption = self._extract_figure_caption(inner)
+                label_match = re.search(r'\\label\s*\{([^}]+)\}', inner)
+                label = label_match.group(1) if label_match else ''
+                self.figure_counter += 1
+                if label:
+                    self.figure_labels[label] = self.figure_counter
+                result = ''.join(f'\n\n<!-- TIKZ_FIGURE:{t} -->\n' for t in tikz_matches)
+                if caption:
+                    result += f'\n*Figure {self.figure_counter}: {caption}*\n'
+                return result + '\n'
+            # Inline tikzpicture/axis (not via \input) inside figure env —
+            # render via TIKZ_RAW block (tikz_placeholder.py Phase 3).
+            if re.search(r'\\begin\{(tikzpicture|axis)\}', inner):
+                self.tikz_raw_counter += 1
+                n = self.tikz_raw_counter
+                caption = self._extract_figure_caption(inner)
+                label_match = re.search(r'\\label\s*\{([^}]+)\}', inner)
+                label = label_match.group(1) if label_match else ''
+                self.figure_counter += 1
+                if label:
+                    self.figure_labels[label] = self.figure_counter
+                raw = inner.strip()
+                raw = raw.replace('\\', '\\LATEXBS')
+                result = (
+                    f'\n<!-- TIKZ_RAW:{n}|{caption} -->\n'
+                    f'{raw}\n'
+                    f'<!-- /TIKZ_RAW:{n} -->\n'
+                )
+                if caption:
+                    result += f'\n*Figure {self.figure_counter}: {caption}*\n'
+                return result + '\n'
             # Check if this figure contains code listings (minted/lstlisting/verbatim)
             # instead of images. These need image-based rendering.
             if re.search(r'\\begin\{(minted|lstlisting|verbatim)\}', inner):
@@ -594,7 +658,7 @@ class LatexToMarkdown:
                     f'{raw}\n'
                     f'<!-- /CODE_RAW:{n} -->\n'
                 )
-            return ''  # No image or code found
+            return ''  # No image, TikZ, or code found
 
         img_path = img_match.group(2)
         img_options = img_match.group(1) or ""
@@ -606,25 +670,27 @@ class LatexToMarkdown:
             return ''
 
         # Find \caption
-        caption = ''
-        cap_match = re.search(r'\\caption\s*\{', inner)
-        if cap_match:
-            _, end = TexProject._extract_balanced_braces(inner, cap_match.end() - 1)
-            caption = inner[cap_match.end():end - 1]
-            # Clean caption
-            caption = self._clean_text_content(caption)
+        caption = self._extract_figure_caption(inner)
 
         # Find \label
-        label = ''
         label_match = re.search(r'\\label\s*\{([^}]+)\}', inner)
-        if label_match:
-            label = label_match.group(1)
+        label = label_match.group(1) if label_match else ''
 
         self.figure_counter += 1
+        if label:
+            self.figure_labels[label] = self.figure_counter
         result = f'\n\n![Figure {self.figure_counter}: {caption}]({md_img})\n\n'
         if caption:
             result += f'*Figure {self.figure_counter}: {caption}*\n\n'
         return result
+
+    def _extract_figure_caption(self, inner: str) -> str:
+        """Extract and clean \\caption{...} from figure env inner content."""
+        cap_match = re.search(r'\\caption\s*\{', inner)
+        if not cap_match:
+            return ''
+        _, end = TexProject._extract_balanced_braces(inner, cap_match.end() - 1)
+        return self._clean_text_content(inner[cap_match.end():end - 1])
 
     def _resolve_image(self, img_path: str) -> str:
         """Resolve an image path and convert PDF to PNG if needed."""
@@ -976,11 +1042,14 @@ class LatexToMarkdown:
     def _process_math(self, content: str) -> str:
         """Ensure math formulas are properly delimited."""
         # \( ... \) → $ ... $
-        content = re.sub(r'\\\(\s*', '$', content)
-        content = re.sub(r'\s*\\\)', '$', content)
+        # Use (?<!\\) lookbehind so we match single-backslash \( \) (inline math)
+        # but NOT \\( or \\) which are LaTeX line breaks with optional args.
+        content = re.sub(r'(?<!\\)\\\(\s*', '$', content)
+        content = re.sub(r'\s*(?<!\\)\\\)', '$', content)
         # \[ ... \] → $$ ... $$
-        content = re.sub(r'\\\[\s*', '$$', content)
-        content = re.sub(r'\s*\\\]', '$$', content)
+        # Same lookbehind: match \[ (display math) but NOT \\[ (line break + opt arg).
+        content = re.sub(r'(?<!\\)\\\[\s*', '$$', content)
+        content = re.sub(r'\s*(?<!\\)\\\]', '$$', content)
         # \displaystyle → just remove (keep content)
         content = content.replace('\\displaystyle', ' ')
 
@@ -1030,10 +1099,22 @@ class LatexToMarkdown:
         content = re.sub(r'\\(?:citep?|parencite)\s*\{([^}]*)\}', lambda m: f'[{m.group(1)}]', content)
         content = re.sub(r'\\citeauthor\s*\{([^}]*)\}', lambda m: f'[{m.group(1)}]', content)
         content = re.sub(r'\\citeyear\s*\{([^}]*)\}', lambda m: f'[{m.group(1)}]', content)
-        # \ref{label} → (Figure/Table N)
+        # \ref{label} → (Figure N) using recorded figure numbers when available
+        def _ref_replacement(label: str) -> str:
+            if label in self.figure_labels:
+                return f'(Figure {self.figure_labels[label]})'
+            if label.startswith('fig:'):
+                return f'(Figure {label[4:]})'
+            if label.startswith('tab:'):
+                return f'(Table {label[4:]})'
+            if label.startswith('eq:'):
+                return f'(Equation {label[4:]})'
+            return f'({label})'
         content = re.sub(r'\\ref\s*\{([^}]*)\}',
-                         lambda m: f'({m.group(1).replace("fig:", "Figure ").replace("tab:", "Table ").replace("eq:", "Equation ")})',
+                         lambda m: _ref_replacement(m.group(1)),
                          content)
+        # LaTeX ~ (non-breaking space) before a ref paren → plain space
+        content = re.sub(r'~(?=\()', ' ', content)
         # \eqref{label} → (Equation N)
         content = re.sub(r'\\eqref\s*\{([^}]*)\}',
                          lambda m: f'(Equation {m.group(1)})', content)
@@ -1062,11 +1143,16 @@ class LatexToMarkdown:
             '\\{': '{',
             '\\}': '}',
             '\\~': '~',
+            '\\S': '§',
             '\\ldots': '...',
             '\\dots': '...',
         }
         for latex, char in replacements.items():
             content = content.replace(latex, char)
+
+        # Remove \\printbibliography / \\bibliography leftovers
+        content = re.sub(r'\\printbibliography(?:\[[^\]]*\])?', '', content)
+        content = re.sub(r'\\bibliography(?:\[[^\]]*\])?\s*\{[^}]*\}', '', content)
 
         # Remove \newpage, \clearpage, \pagebreak
         content = re.sub(r'\\(newpage|clearpage|pagebreak)\b', '', content)
@@ -1074,7 +1160,24 @@ class LatexToMarkdown:
         return content
 
     def _clean_text_content(self, text: str) -> str:
-        """Clean up text content (for captions, titles, etc.)."""
+        """Clean up text content (for captions, titles, etc.).
+
+        Math regions ($...$, $$...$$) are protected first so command-stripping
+        does not mangle them (e.g. $\boldsymbol{w}$ must not become $$, which
+        would break $$ pairing across the whole document — P38).
+        """
+        math_placeholders = {}
+        counter = [0]
+
+        def protect_math(match):
+            key = f'__MATHCLEAN{counter[0]}__'
+            counter[0] += 1
+            math_placeholders[key] = match.group(0)
+            return key
+
+        text = re.sub(r'\$\$.*?\$\$', protect_math, text, flags=re.DOTALL)
+        text = re.sub(r'(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)', protect_math, text)
+
         text = re.sub(r'\\textbf\s*\{([^}]*)\}', r'**\1**', text)
         text = re.sub(r'\\textit\s*\{([^}]*)\}', r'*\1*', text)
         text = re.sub(r'\\emph\s*\{([^}]*)\}', r'*\1*', text)
@@ -1086,6 +1189,10 @@ class LatexToMarkdown:
         text = re.sub(r'\\[a-zA-Z]+\s*\{([^}]*)\}', r'\1', text)  # Generic: \cmd{x} → x
         text = text.replace('\\xspace', ' ')
         text = re.sub(r'\\[a-zA-Z]+', '', text)  # Remove remaining commands
+
+        for key, val in math_placeholders.items():
+            text = text.replace(key, val)
+
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 

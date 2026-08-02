@@ -155,29 +155,25 @@ def _balanced_braces(s: str, start: int) -> tuple:
     return (len(s) - start), len(s)
 
 
-def compile_tikz(tex_path: Path, output_jpg: Path, dpi: int = 200) -> bool:
-    """Compile a .tex TikZ figure to JPEG using MiKTeX pdflatex + pymupdf."""
+def _compile_body(figure_body: str, output_jpg: Path, dpi: int = 200,
+                  label: str = "figure") -> bool:
+    """Compile a raw LaTeX body (tikzpicture) to PNG using MiKTeX + pymupdf."""
     if not Path(PDFLATEX).exists():
         print(f"  [ERROR] pdflatex not found at {PDFLATEX}")
         return False
 
-    tex_path = Path(tex_path)
     workdir = tempfile.mkdtemp(prefix='tikz_ph_')
 
     try:
-        # Read and preprocess: strip figure/wrapfigure/subfigure wrappers
-        raw = tex_path.read_text(encoding='utf-8', errors='replace')
-        figure_body = _extract_figure_body(raw)
-
-        # Build standalone document with body inlined (no \\input)
+        # Build standalone document with body inlined (no input)
         wrapper_tex = os.path.join(workdir, 'figure.tex')
-        doc = TIKZ_PREAMBLE.replace('\\input{__TEX_PATH__}', figure_body)
+        doc = TIKZ_PREAMBLE.replace('\input{__TEX_PATH__}', figure_body)
         with open(wrapper_tex, 'w', encoding='utf-8') as f:
             f.write(doc)
 
         # Run pdflatex (twice for cross-refs)
         for _ in range(2):
-            result = subprocess.run(
+            subprocess.run(
                 [PDFLATEX, "-interaction=nonstopmode", "figure.tex"],
                 cwd=workdir,
                 capture_output=True,
@@ -194,12 +190,12 @@ def compile_tikz(tex_path: Path, output_jpg: Path, dpi: int = 200) -> bool:
                     log = f.read()
                 errors = [l.strip() for l in log.split('\n') if l.startswith('!')]
                 if errors:
-                    print(f"  [WARNING] LaTeX errors for {tex_path.name}:")
+                    print(f"  [WARNING] LaTeX errors for {label}:")
                     for e in errors[:3]:
                         print(f"    {e}")
             return False
 
-        # Convert PDF → PNG
+        # Convert PDF -> PNG
         import fitz
         doc = fitz.open(pdf_path)
         page = doc[0]
@@ -210,12 +206,22 @@ def compile_tikz(tex_path: Path, output_jpg: Path, dpi: int = 200) -> bool:
         return True
 
     except Exception as e:
-        print(f"  [ERROR] {tex_path.name}: {e}")
+        print(f"  [ERROR] {label}: {e}")
         return False
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def compile_tikz(tex_path: Path, output_jpg: Path, dpi: int = 200) -> bool:
+    """Compile a .tex TikZ figure to PNG using MiKTeX pdflatex + pymupdf."""
+    tex_path = Path(tex_path)
+    try:
+        raw = tex_path.read_text(encoding='utf-8', errors='replace')
+    except Exception as e:
+        print(f"  [ERROR] Cannot read {tex_path.name}: {e}")
+        return False
+    figure_body = _extract_figure_body(raw)
+    return _compile_body(figure_body, output_jpg, dpi=dpi, label=tex_path.name)
 def resolve_placeholders(md_path: str, tex_dir: str, dpi: int = 200) -> int:
     """Main entry point: resolve all TIKZ_FIGURE placeholders in a .md file.
 
@@ -301,9 +307,40 @@ def resolve_placeholders(md_path: str, tex_dir: str, dpi: int = 200) -> int:
                 replacement = f"> *[Figure: {img_name} — image not found]*"
                 content = content[:m.start()] + replacement + content[m.end():]
 
+    # === Phase 3: TIKZ_RAW blocks (inline tikzpicture inside figure env) ===
+    tikz_raw_pattern = re.compile(
+        r'<!--\s*TIKZ_RAW:(\d+)\|(.*?) -->[\r\n]+(.*?)[\r\n]+<!-- /TIKZ_RAW:\1 -->',
+        re.DOTALL
+    )
+    raw_matches = list(tikz_raw_pattern.finditer(content))
+    resolved_raw = 0
+    if raw_matches:
+        print(f"\nFound {len(raw_matches)} TIKZ_RAW block(s)")
+        for m in reversed(raw_matches):
+            n = m.group(1)
+            caption = m.group(2)
+            raw = m.group(3).replace('\\LATEXBS', '\\')
+            body = _extract_figure_body(raw)
+            jpg_name = f"tikz_{n}.png"
+            jpg_path = images_dir / jpg_name
+            print(f"  [tikz_raw:{n}] Compiling inline tikzpicture...")
+            if _compile_body(body, jpg_path, dpi=dpi, label=f"tikz_raw:{n}"):
+                size = jpg_path.stat().st_size if jpg_path.exists() else 0
+                print(f"  [tikz_raw:{n}] OK -> images/{jpg_name} ({size:,} bytes)")
+                alt = re.sub(r'[\[\]]', '', caption) or f"Figure {n}"
+                replacement = f"![{alt}](images/{jpg_name})"
+                content = content[:m.start()] + replacement + content[m.end():]
+                resolved_raw += 1
+            else:
+                print(f"  [tikz_raw:{n}] FAILED - leaving a visible note")
+                alt = re.sub(r'[\[\]]', '', caption) or n
+                replacement = f"> *[Figure: {alt} - TikZ compilation failed]*"
+                content = content[:m.start()] + replacement + content[m.end():]
+
     # Write back
     md_path.write_text(content, encoding='utf-8')
-    print(f"\nDone: {resolved}/{len(placeholders)} TikZ figures resolved")
+    print(f"\nDone: {resolved}/{len(placeholders)} TikZ figures resolved, "
+          f"{resolved_raw}/{len(raw_matches)} TIKZ_RAW blocks resolved")
     print(f"Updated: {md_path}")
 
     return resolved
